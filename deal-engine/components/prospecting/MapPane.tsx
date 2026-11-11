@@ -30,7 +30,7 @@ export default function MapPane({ leads, selected, onSelect }: { leads: Lead[]; 
         <ZoomControl position="topright" />
         {mode === 'map'
           ? <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" attribution='&copy; OpenStreetMap contributors &copy; CARTO' />
-          : <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" attribution="Imagery &copy; Esri" />}
+          : <TileLayer url="https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}" maxNativeZoom={16} maxZoom={19} attribution='Imagery: <a href="https://www.usgs.gov/programs/national-geospatial-program/national-map">USGS The National Map</a>' />}
         {leads.map((l) => <Marker key={l.pid} position={[l.lat, l.lng]} icon={icon(l.pid === selected?.pid)} eventHandlers={{ click: () => onSelect(l.pid) }} title={l.address} />)}
         <Frame leads={leads} lead={selected} />
       </MapContainer>

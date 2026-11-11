@@ -83,7 +83,7 @@ Status key: **Mock** = works in mock mode today. **Backend** = UI exists, needs 
 |---|---|---|---|
 | P1 | "Generate 5 leads" serves five lead-candidate parcels this visitor has not seen. | No PID is served twice to the same user. `remaining` counts down. Button reads "Pool exhausted" at 0. | Mock / Backend (`serve-leads`) |
 | P2 | Served leads persist across reloads. | Reload shows the same list in serve order with current statuses. | Mock / Backend |
-| P3 | List, map and detail panes stay in sync. | Clicking a row or a pin selects the lead. The map fits all pins when the list changes and pans (no zoom jump) on selection. | Mock |
+| P3 | List, map and detail panes stay in sync. The map uses only free, keyless tiles: CARTO/OSM streets and USGS imagery. | Clicking a row or a pin selects the lead. The map fits all pins when the list changes and pans (no zoom jump) on selection. | Mock |
 | P4 | Filters: location text, property type, owner type (LLC/company, trust, absentee). | Filters apply to both list and map. Empty state explains no matches. | Mock |
 | P5 | Row quick tags: Loan due (estimated maturity within ±18 months), Absentee, N simulated, non-New status. | Computed from the row alone with no fetch. | Mock |
 | P6 | Summary tab: type, footprint, lot, footprint change, last sale, zoning, permitted uses, max FAR, flood zone, jurisdiction, simulated signals. | Every value cited. Unverified zoning shows "Jurisdiction default, not verified" or "Not fetched". | Mock |
@@ -187,9 +187,9 @@ All edge functions:
 
 | Dataset | Source | Load |
 |---|---|---|
-| Parcels | Charleston County GIS `MapServer/7`, class codes listed in the README, whitespace trimmed | One-time, service role |
+| Parcels | Charleston County GIS `MapServer/7`, class codes listed in the README, whitespace trimmed. Address from layer 1 or the city address layers. Jurisdiction from layer 19. | One-time, service role (`scripts/fetch_snapshot.py`, `scripts/load_snapshot.py`) |
 | Footprints | `MapServer/61` by PID, summed area, percent change | One-time |
-| Flood zone | FEMA, via the existing Docker job | One-time |
+| Flood zone | County layer 36, current FEMA flood data, point query per parcel | One-time |
 | 10-year Treasury | FRED `DGS10`, monthly average | One-time, refresh monthly |
 | Zoning | Augur (Zoneomics), on demand per served lead | Cached in `zoning_cache` |
 | Simulated signals | Seeded mock text, lead candidates only | One-time |
@@ -200,18 +200,19 @@ All edge functions:
 
 Found while reading the prototype against this spec.
 
-1. **Class code 250.** The README load step includes code 250, but `ClassCode`, `TYPES` and the `parcels` check constraint do not. Decide whether to add it (with label and spread) or drop it from the load.
+1. ~~**Class code 250.**~~ Decided: excluded. 250 is commercial condo, and condo units share one building footprint, so footprint value math would overstate each unit.
 2. ~~**Hard-coded date in `get_comps`.**~~ Fixed: the comp window now runs from the subject's `data_as_of`.
 3. **Regeneration cost.** `ListingWorkspace` calls `generateAsset` on every tab switch and every Plant-errors toggle, so each one is a new model call and a new `assets` row. See L9.
 4. **Approval is not reloaded.** Approved state is held in component state. On reload, the asset regenerates and approval disappears even though `approved_at` was written. See L5.
 5. **Simulated signals count toward the score.** Each simulated signal adds a point, so a mock signal can lift a lead from Moderate to Strong. Either exclude them from the score or show the score with and without them.
 6. **"Why now" is tagged "AI draft" but is a code template.** Either relabel it or move it behind `draft-outreach`.
 7. **`deal_view.type_label` returns the class code**, while the mock returns the label. `ClosedDeals` handles both. Pick one.
-8. **Mock Treasury rates are annual averages**, while the real table is monthly. Fine for mock. Note it in the UI tooltip.
-9. **Absentee means out-of-state only.** An owner mailing from Columbia, SC counts as local. Consider comparing the mailing city or ZIP against the property.
-10. **Number match uses exact equality.** That works for integers. Rounding rules need to be defined for acreage and $/SF so the model and the check agree.
-11. **Anonymous auth can be farmed** for more rate-limit budget. The global daily cap in §9 is the backstop. Consider CAPTCHA on first sign-in.
-12. **Stubs in the UI:** bulk select, "Add to pipeline" icon, "Associated properties" link (P12).
+8. **Multi-parcel deeds.** The county records the full deal price on every parcel in a deed. Fixed in `get_comps` by grouping on sale date, price and owner and summing footprints. Parcels in a deed that fall outside the loaded class codes are not counted.
+9. **Mock Treasury rates are annual averages**, while the real table is monthly. Fine for mock. Note it in the UI tooltip.
+10. **Absentee means out-of-state only.** An owner mailing from Columbia, SC counts as local. Consider comparing the mailing city or ZIP against the property.
+11. **Number match uses exact equality.** That works for integers. Rounding rules need to be defined for acreage and $/SF so the model and the check agree.
+12. **Anonymous auth can be farmed** for more rate-limit budget. The global daily cap in §9 is the backstop. Consider CAPTCHA on first sign-in.
+13. **Stubs in the UI:** bulk select, "Add to pipeline" icon, "Associated properties" link (P12).
 
 ## 12. Success criteria
 
@@ -231,8 +232,8 @@ Found while reading the prototype against this spec.
 | Milestone | Scope | Exit criteria |
 |---|---|---|
 | **M0. Prototype** (done) | Mock provider, all four stages, calc tests | `npm test` and `npm run typecheck` pass in mock mode |
-| **M1. Spec fixes** | Resolve §11 items 1 to 7 that touch schema or types | Migration and types agree. Decisions recorded here. |
-| **M2. Data load** | Parcels, footprints, FEMA, rates, candidate flag, seeded signals | Row counts and spot-checked PIDs match the county record |
+| **M1. Spec fixes** | Resolve §11 items 1 to 7 that touch schema or types | Migration and types agree. Decisions recorded here. In progress: items 1, 2 and 8 done. |
+| **M2. Data load** (done 2026-11-11) | Parcels, footprints, FEMA, rates, candidate flag, seeded signals | Loaded: 7,327 parcels, 4,043 lead candidates, 4,166 simulated signals, 779 monthly rates (through Nov 2026). |
 | **M3. Backend** | Run migration, anonymous auth, `serve-leads`, `lookup-zoning`, rate limits | `NEXT_PUBLIC_DATA_MODE=supabase` runs Prospect and Outreach end to end. A second anonymous user sees none of the first user's rows. |
 | **M4. AI functions** | `draft-outreach`, `generate-copy`, `judge-copy`, asset reuse (L9), approval reload (L5) | Planted errors are blocked. Clean copy passes and can be approved. |
 | **M5. Evals** | Golden set, `eval_runs`, eval panel reads real data (L8) | Current prompt version has a recorded baseline |

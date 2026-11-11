@@ -47,12 +47,25 @@ All require the caller's Supabase JWT, enforce a per-user rate limit, and never 
 
 ## One-time data load (service role, run locally)
 
-1. Parcels: county `External_GIS_Website/MapServer/7`, class codes 200, 250, 304, 500, 530, 580, 630, 650, 700; trim class code whitespace. Query directly, no proxy.
-2. Footprints: `MapServer/61` by PID, sum area, keep percent change.
-3. Flood zone: existing FEMA Docker job.
-4. Rates: FRED `DGS10` monthly into `rates_10y`.
-5. Set `is_lead_candidate` false for institutional or government owners and sales under $10,000.
-6. Seed `simulated_signals` for lead candidates only.
+```bash
+pip install shapely
+python3 scripts/fetch_snapshot.py snapshot      # public sources only, writes snapshot/*.json
+SUPABASE_URL=https://<ref>.supabase.co SUPABASE_SECRET_KEY=sb_secret_... python3 scripts/load_snapshot.py snapshot
+```
+
+`fetch_snapshot.py` reads `GIS_VIEWER/External_GIS_Website/MapServer` on `gisccapps.charlestoncounty.org`:
+
+1. Parcels: layer 7, class codes 200, 304, 500, 530, 580, 630, 650, 700 (250, commercial condo, is excluded because units share one footprint). Interior point of the polygon for lat/lng.
+2. Address: layer 1 by PID, else address points inside the parcel from the city layers (30 Charleston, 43 North Charleston, 27 Mount Pleasant).
+3. Footprints: layer 61 by PID, summed 2025 area, percent change against the summed previous area.
+4. Jurisdiction: layer 19 municipal boundaries, else unincorporated county.
+5. Flood zone: layer 36 current FEMA flood data, point query per parcel.
+6. Other parcels: countywide count of parcels with the same `OWNER1`.
+7. Rates: FRED `DGS10` daily CSV averaged by month.
+8. `is_lead_candidate`: has address, footprint and sale; sale between $10,000 and $50M; owner not government, institutional, religious or a national chain.
+9. `simulated_signals`: 0 to 2 mock signals per lead candidate, deterministic by PID.
+
+Comps (`get_comps`) treat parcels sharing a sale date, price and owner as one deed and sum their footprints.
 
 ## Deploy
 
@@ -61,7 +74,7 @@ All require the caller's Supabase JWT, enforce a per-user rate limit, and never 
 
 ## UI notes
 
-- Map: Leaflet with CARTO Voyager tiles and an Esri imagery toggle. Both need their attribution kept on screen.
+- Map: Leaflet (free, no key) with CARTO Voyager tiles and a USGS National Map imagery toggle (public domain, no key). Keep the attribution on screen. No Google or Esri services.
 - Photos: each row has a photo slot (`components/ui/Thumb.tsx`). In the build, fill it server-side with a Street View Static or county aerial image so no key reaches the browser.
 - Owner contacts are intentionally not faked. The Ownership tab stops at the public record and points to Buildout’s owner lookup.
 

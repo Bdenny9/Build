@@ -1,6 +1,6 @@
 import type { ClassCode, SourceKey } from '@/types/domain';
 
-export const AS_OF = '2026-11-10';
+export const AS_OF = '2026-11-11'; // parcels.data_as_of for the loaded snapshot
 
 export const TYPES: Record<ClassCode, { label: string; spreadPts: number }> = {
   '200': { label: 'Apartments', spreadPts: 1.75 },
@@ -18,7 +18,7 @@ export const ASSUMPTIONS = {
   ltv: 0.65,
   amortMonths: 300,
   termMonths: 120,
-  today10y: 4.2,
+  today10y: 4.89, // FRED DGS10, Nov 2026 monthly average in rates_10y
   nominalSaleFloor: 10_000,
   followUpDays: 7,
 };
