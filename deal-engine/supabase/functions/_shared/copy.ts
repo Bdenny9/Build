@@ -3,8 +3,17 @@ import { GEN_MODEL, JUDGE_MODEL, structured, type Meter, type Model } from './cl
 import type { Record_ } from './facts.ts';
 import { HttpError } from './http.ts';
 
-/** Bump when the generation or judge prompt changes. eval_runs and assets record it. */
-export const PROMPT_VERSION = 'copy-v1';
+/**
+ * Prompt versions are kept side by side so evals can A/B them on the same golden set, and production can roll back
+ * by changing PROMPT_VERSION (or the `prompt_version` passed to run-evals). eval_runs and assets record the version.
+ * copy-v2, each change tied to a measured failure on golden set v2:
+ *  - writer: cover every key fact in a non-null section (cheaper writers dropped the comps median: usefulness 77.5%)
+ *  - judge: reason is generated before the verdict (Haiku wrote "inflates the figure" and then overstates=false)
+ */
+export const PROMPT_VERSIONS = ['copy-v1', 'copy-v2'] as const;
+export type PromptVersion = (typeof PROMPT_VERSIONS)[number];
+export const PROMPT_VERSION: PromptVersion = 'copy-v1';
+export const isPromptVersion = (v: unknown): v is PromptVersion => (PROMPT_VERSIONS as readonly unknown[]).includes(v);
 export type AssetKind = 'description' | 'highlights' | 'mailer' | 'email';
 export const KINDS: AssetKind[] = ['description', 'highlights', 'mailer', 'email'];
 
@@ -15,10 +24,13 @@ const SHAPE: Record<AssetKind, string> = {
   email: 'An email promo: 4 claims, the last a call to action to request the offering memorandum.',
 };
 
-const GEN_SYSTEM = `You write commercial real estate marketing copy for a broker, using only a county property record.
+const COVERAGE_V2 = `
+- Cover every non-null section. Always state the footprint, the acreage, the flood zone and, when comps exist, the median price per footprint square foot with its number. Include zoning when it is present.`;
+
+const genSystem = (v: PromptVersion) => `You write commercial real estate marketing copy for a broker, using only a county property record.
 
 Return claims, not prose. Each claim is one sentence or bullet that states facts from exactly one source section of the record, and cites that section as "source".
-- Use only facts present in the record. A section that is null does not exist: do not mention it.
+- Use only facts present in the record. A section that is null does not exist: do not mention it.${v === 'copy-v2' ? COVERAGE_V2 : ''}
 - State numbers exactly as given. When a claim states the footprint, acreage or comps median, set numeric_field to footprintSf, acreage or medianPsf and numeric_value to that exact number, and write the same number in the text (thousands separators allowed). Otherwise numeric_field is "none" and numeric_value is 0.
 - Building size is a ground footprint only. Do not call it total or rentable square footage.
 - Do not state or imply price, value, cap rate, income, occupancy, condition, renovations, tenants, proximity to landmarks, or anything about the neighborhood's residents.
@@ -51,10 +63,10 @@ const CLAIMS_SCHEMA = {
 
 type RawClaim = { text: string; source: SourceKey; detail: string; numeric_field: NumericField | 'none'; numeric_value: number };
 
-export async function generateClaims(r: Record_, kind: AssetKind, model: Model = GEN_MODEL, meter?: Meter): Promise<Claim[]> {
+export async function generateClaims(r: Record_, kind: AssetKind, model: Model = GEN_MODEL, meter?: Meter, version: PromptVersion = PROMPT_VERSION): Promise<Claim[]> {
   const out = await structured<{ claims: RawClaim[] }>({
     model, meter,
-    system: GEN_SYSTEM,
+    system: genSystem(version),
     user: `Format: ${SHAPE[kind]}\n\nRecord (JSON, keyed by source):\n${JSON.stringify(r.record, null, 2)}`,
     schema: CLAIMS_SCHEMA,
   });
@@ -77,7 +89,7 @@ export function plantedClaims(simulated: string | null): Claim[] {
   return c;
 }
 
-const JUDGE_SYSTEM = `You review commercial real estate marketing copy against the property record it was written from.
+const judgeSystem = (v: PromptVersion) => `You review commercial real estate marketing copy against the property record it was written from.
 
 For every claim, decide whether it overstates its cited source. A claim overstates when it:
 - states a fact that is not in the cited section, or cites a section that is null or missing,
@@ -86,9 +98,12 @@ For every claim, decide whether it overstates its cited source. A claim overstat
 - treats a building footprint as total or rentable area,
 - relies on simulated data (source "sim") or has no source.
 A call to action citing "assume" that states no facts does not overstate.
-Judge each claim on its own. Give a one-sentence reason for every verdict.`;
+Judge each claim on its own. ${v === 'copy-v2'
+    ? 'For each claim, first write a one-sentence reason, then give the verdict that follows from it.'
+    : 'Give a one-sentence reason for every verdict.'}`;
 
-const JUDGE_SCHEMA = {
+// Field order is generation order. v2 puts the reason first so the verdict is conditioned on it.
+const judgeSchema = (v: PromptVersion) => ({
   type: 'object',
   additionalProperties: false,
   required: ['verdicts'],
@@ -98,23 +113,25 @@ const JUDGE_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['index', 'overstates', 'reason'],
-        properties: { index: { type: 'integer' }, overstates: { type: 'boolean' }, reason: { type: 'string' } },
+        required: v === 'copy-v2' ? ['index', 'reason', 'overstates'] : ['index', 'overstates', 'reason'],
+        properties: v === 'copy-v2'
+          ? { index: { type: 'integer' }, reason: { type: 'string' }, overstates: { type: 'boolean' } }
+          : { index: { type: 'integer' }, overstates: { type: 'boolean' }, reason: { type: 'string' } },
       },
     },
   },
-};
+});
 
 export interface JudgeVerdict { index: number; overstates: boolean; reason: string }
 export interface JudgeResult { result: CheckResult; verdicts: JudgeVerdict[] }
 
-export async function judgeClaims(r: Record_, claims: Claim[], model: Model = JUDGE_MODEL, meter?: Meter): Promise<JudgeResult> {
+export async function judgeClaims(r: Record_, claims: Claim[], model: Model = JUDGE_MODEL, meter?: Meter, version: PromptVersion = PROMPT_VERSION): Promise<JudgeResult> {
   const out = await structured<{ verdicts: JudgeVerdict[] }>({
     model, meter,
-    system: JUDGE_SYSTEM,
+    system: judgeSystem(version),
     user: `Record (JSON, keyed by source):\n${JSON.stringify(r.record, null, 2)}\n\nClaims:\n${JSON.stringify(
       claims.map((c, i) => ({ index: i, text: c.text, source: c.source ?? 'none' })), null, 2)}`,
-    schema: JUDGE_SCHEMA,
+    schema: judgeSchema(version),
   });
   const byIndex = new Map((out?.verdicts ?? []).map((v) => [v.index, v]));
   // A claim the judge skipped counts as overstated: missing verdicts must not pass.

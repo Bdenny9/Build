@@ -21,12 +21,12 @@
 import { admin, isServiceCaller } from '../_shared/auth.ts';
 import { allPass, codeChecks, type Claim } from '../_shared/checks.ts';
 import { GEN_MODEL, isModel, JUDGE_MODEL, newMeter, type Model } from '../_shared/claude.ts';
-import { generateClaims, judgeClaims, plantedClaims, PROMPT_VERSION, type AssetKind } from '../_shared/copy.ts';
+import { generateClaims, isPromptVersion, judgeClaims, plantedClaims, PROMPT_VERSION, type AssetKind, type PromptVersion } from '../_shared/copy.ts';
 import { loadRecord, type Record_ } from '../_shared/facts.ts';
 import { handle, HttpError } from '../_shared/http.ts';
 
 /** Bump when golden cases are added or changed; runs are only compared within one golden set. */
-const GOLDEN_SET = 'v2';
+const GOLDEN_SET = 'v3';
 
 type CaseType = 'clean' | 'planted' | 'injected' | 'true_claims' | 'adversarial';
 interface Case {
@@ -93,12 +93,12 @@ function coverage(r: Record_, claims: Claim[]): number {
   return facts.filter(Boolean).length / facts.length;
 }
 
-async function runCase(db: ReturnType<typeof admin>, c: Case, gen: Model, judgeModel: Model) {
+async function runCase(db: ReturnType<typeof admin>, c: Case, gen: Model, judgeModel: Model, version: PromptVersion) {
   const meter = newMeter();
   const base = await loadRecord(db, c.pid);
   const vals = placeholders(base);
   const r = patchRecord(base, c.record_patch, vals);
-  const generated = await generateClaims(r, c.kind, gen, meter);
+  const generated = await generateClaims(r, c.kind, gen, meter, version);
 
   let extra: Claim[] = [];
   if (c.case_type === 'planted') {
@@ -109,7 +109,7 @@ async function runCase(db: ReturnType<typeof admin>, c: Case, gen: Model, judgeM
   }
   const claims = [...generated, ...extra];
   const checks = codeChecks(claims, r.numeric);
-  const judge = await judgeClaims(r, claims, judgeModel, meter);
+  const judge = await judgeClaims(r, claims, judgeModel, meter, version);
   const extraIdx = extra.map((_, i) => generated.length + i);
   const forbidHit = c.forbid ? new RegExp(c.forbid, 'i').test(generated.map((g) => g.text).join(' ')) : false;
   const passed = allPass(checks) && judge.result.pass;
@@ -163,7 +163,7 @@ function score(results: CaseResult[], failed: number) {
 
 // A full run takes longer than one function invocation allows, so callers send a few case_ids at a time
 // and pass back the run_id they got: results accumulate on one eval_runs row and metrics are recomputed.
-// Request { case_ids?: number[], run_id?: uuid, gen_model?, judge_model? } -> { id, prompt_version, cases, metrics, failures }
+// Request { case_ids?: number[], run_id?: uuid, gen_model?, judge_model?, prompt_version? } -> { id, prompt_version, cases, metrics, failures }
 // Models default to the GEN_MODEL / JUDGE_MODEL secrets, so a sweep compares models without redeploying.
 Deno.serve(handle(async (req, body) => {
   if (!isServiceCaller(req)) throw new HttpError(403, 'run-evals requires the service role');
@@ -178,18 +178,20 @@ Deno.serve(handle(async (req, body) => {
   const gen = body.gen_model === undefined ? GEN_MODEL : body.gen_model;
   const judgeModel = body.judge_model === undefined ? JUDGE_MODEL : body.judge_model;
   if (!isModel(gen) || !isModel(judgeModel)) throw new HttpError(400, 'Unknown gen_model or judge_model');
+  const version = body.prompt_version === undefined ? PROMPT_VERSION : body.prompt_version;
+  if (!isPromptVersion(version)) throw new HttpError(400, 'Unknown prompt_version');
 
   let prior: { results: CaseResult[]; failures: { case_id: number; error: string }[] } = { results: [], failures: [] };
   if (body.run_id) {
     const { data: run } = await db.from('eval_runs').select('prompt_version, gen_model, judge_model, golden_set, results').eq('id', String(body.run_id)).maybeSingle();
     if (!run) throw new HttpError(404, 'No such run');
-    if (run.prompt_version !== PROMPT_VERSION || run.golden_set !== GOLDEN_SET) throw new HttpError(409, `Run was started on ${run.prompt_version} / golden set ${run.golden_set}`);
+    if (run.prompt_version !== version || run.golden_set !== GOLDEN_SET) throw new HttpError(409, `Run was started on ${run.prompt_version} / golden set ${run.golden_set}`);
     if (run.gen_model !== gen || run.judge_model !== judgeModel) throw new HttpError(409, `Run uses ${run.gen_model} / ${run.judge_model}`);
     prior = run.results;
   }
 
   const fresh: CaseResult[] = [], failures: { case_id: number; error: string }[] = [];
-  const batch = await Promise.allSettled((cases as Case[]).map((c) => runCase(db, c, gen, judgeModel)));
+  const batch = await Promise.allSettled((cases as Case[]).map((c) => runCase(db, c, gen, judgeModel, version)));
   batch.forEach((b, j) => b.status === 'fulfilled' ? fresh.push(b.value)
     : failures.push({ case_id: (cases as Case[])[j].id, error: String((b.reason as Error)?.message ?? b.reason) }));
   if (!fresh.length) throw new HttpError(502, `Every case failed: ${failures[0]?.error ?? 'unknown error'}`);
@@ -198,7 +200,7 @@ Deno.serve(handle(async (req, body) => {
   const results = [...prior.results.filter((r) => !done.has(r.case_id)), ...fresh];
   const allFailures = [...prior.failures.filter((f) => !done.has(f.case_id)), ...failures];
   const row = {
-    prompt_version: PROMPT_VERSION, golden_set: GOLDEN_SET, model: judgeModel, gen_model: gen, judge_model: judgeModel,
+    prompt_version: version, golden_set: GOLDEN_SET, model: judgeModel, gen_model: gen, judge_model: judgeModel,
     cases: results.length, metrics: score(results, allFailures.length), results: { results, failures: allFailures },
   };
 
@@ -206,5 +208,5 @@ Deno.serve(handle(async (req, body) => {
     ? await db.from('eval_runs').update(row).eq('id', String(body.run_id)).select('id').single()
     : await db.from('eval_runs').insert(row).select('id').single();
   if (saved.error) throw new Error(saved.error.message);
-  return { id: saved.data.id, prompt_version: PROMPT_VERSION, golden_set: GOLDEN_SET, gen_model: gen, judge_model: judgeModel, cases: results.length, metrics: row.metrics, failures: allFailures };
+  return { id: saved.data.id, prompt_version: version, golden_set: GOLDEN_SET, gen_model: gen, judge_model: judgeModel, cases: results.length, metrics: row.metrics, failures: allFailures };
 }));
