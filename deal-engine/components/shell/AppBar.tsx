@@ -1,7 +1,8 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { BarChart3, Building2, Check, ChevronDown, Crosshair, LayoutGrid, Megaphone, Receipt } from 'lucide-react';
+import { BarChart3, Building2, Check, ChevronDown, Compass, Crosshair, LayoutGrid, Megaphone, Receipt } from 'lucide-react';
+import { openStartHere } from './StartHere';
 
 const TABS = [
   { href: '/prospecting', label: 'Prospecting', Icon: Crosshair },
@@ -25,6 +26,7 @@ export function AppBar() {
           ))}
         </nav>
         <div className="right">
+          <button className="start-btn" onClick={openStartHere}><Compass aria-hidden /><span>Start here</span></button>
           <div className="note-r">Independent prototype by Brook Denny · not affiliated with Buildout</div>
           <div className="tick" title="Every figure cites its source"><span><Check aria-hidden /></span></div>
           <div className="me"><div className="avatar" aria-hidden>V</div><span>Visitor</span><ChevronDown className="ico" aria-hidden /></div>

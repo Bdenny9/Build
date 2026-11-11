@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Figtree } from 'next/font/google';
 import { AppBar } from '@/components/shell/AppBar';
 import { TooltipLayer } from '@/components/ui/Cite';
+import { StartHere } from '@/components/shell/StartHere';
 import './globals.css';
 
 const figtree = Figtree({ subsets: ['latin'], variable: '--font-figtree', display: 'swap' });
@@ -15,6 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <AppBar />
         <main>{children}</main>
         <TooltipLayer />
+        <StartHere />
       </body>
     </html>
   );
