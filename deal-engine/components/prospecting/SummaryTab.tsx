@@ -2,6 +2,7 @@
 import { Building2, Flame, Landmark } from 'lucide-react';
 import { Cite } from '@/components/ui/Cite';
 import { LV } from '@/components/ui/LV';
+import { ZoningStatus } from '@/components/ui/ZoningStatus';
 import { TYPES } from '@/lib/calc/constants';
 import { int, money, monthYear } from '@/lib/calc/format';
 import type { Lead } from '@/types/domain';
@@ -26,7 +27,7 @@ export function SummaryTab({ lead: l }: { lead: Lead }) {
         <LV rows={[
           ['Zoning', z.precision === 'parcel'
             ? <Cite key="z" source="zoning" detail={`Permitted: ${z.permittedUses.join(', ')}`}>{z.zoneCode}, {z.zoneName}</Cite>
-            : <span key="z" className="tag hot">{z.precision === 'jurisdiction_default' ? 'Jurisdiction default, not verified' : 'Not fetched'}</span>],
+            : <ZoningStatus key="z" z={z} />],
           ['Permitted uses', <span key="u">{z.permittedUses.join(', ') || '—'}</span>],
           ['Max FAR', <span key="far">{z.maxFar ?? 'Not mapped yet'}</span>],
           ['Flood zone', <Cite key="fl" source="fema">{l.floodZone}</Cite>],

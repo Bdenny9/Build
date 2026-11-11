@@ -7,6 +7,7 @@ import {
 import { EvalBars } from '@/components/evals/EvalSummary';
 import { Cite } from '@/components/ui/Cite';
 import { Thumb } from '@/components/ui/Thumb';
+import { ZoningStatus } from '@/components/ui/ZoningStatus';
 import { TYPES, countyRecordUrl } from '@/lib/calc/constants';
 import { allPass, codeChecks, type Facts } from '@/lib/calc/evals';
 import { shortDay } from '@/lib/calc/format';
@@ -204,7 +205,7 @@ function Overview({ lead, go }: { lead: Lead; go: (v: View) => void }) {
           <span>Footprint</span><span><Cite source="foot">{lead.footprintSf.toLocaleString('en-US')} SF</Cite></span>
           <span>Lot</span><span><Cite source="parcel">{lead.acreage} acres</Cite></span>
           <span>Flood zone</span><span><Cite source="fema">{lead.floodZone}</Cite></span>
-          <span>Zoning</span><span>{lead.zoning.precision === 'parcel' ? <Cite source="zoning">{lead.zoning.zoneCode}</Cite> : <span className="tag hot">Not verified</span>}</span>
+          <span>Zoning</span><span>{lead.zoning.precision === 'parcel' ? <Cite source="zoning">{lead.zoning.zoneCode}</Cite> : <ZoningStatus z={lead.zoning} />}</span>
         </div>
       </section>
     </div>

@@ -34,7 +34,8 @@ export interface Zoning {
   maxHeightFt: number | null;
   maxFar: number | null;
   /** 'parcel' = verified for this PID; 'jurisdiction_default' must never reach buyer copy. */
-  precision: 'parcel' | 'jurisdiction_default' | 'none';
+  /** parcel: verified for this PID. none: looked up, no zone returned. not_fetched: no successful lookup yet. */
+  precision: 'parcel' | 'jurisdiction_default' | 'none' | 'not_fetched';
   source: 'zonomics_api' | 'zonomics_cache' | 'zoning_districts' | 'none';
 }
 

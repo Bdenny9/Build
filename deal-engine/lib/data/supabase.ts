@@ -20,7 +20,7 @@ const toLead = (r: LeadRow, status: LeadStatus = 'New'): Lead => ({
   zoning: {
     zoneCode: r.zone_code, zoneName: r.zone_name, permittedUses: r.permitted_uses ?? [],
     commercialPermitted: r.commercial_permitted, industrialPermitted: r.industrial_permitted, multiFamilyPermitted: r.multi_family_permitted,
-    maxHeightFt: r.max_height_ft, maxFar: r.max_far, precision: r.zoning_precision ?? 'none', source: r.zoning_source ?? 'none',
+    maxHeightFt: r.max_height_ft, maxFar: r.max_far, precision: r.zoning_precision ?? 'not_fetched', source: r.zoning_source ?? 'none',
   },
 });
 
@@ -67,7 +67,17 @@ export const supabaseProvider: DataProvider = {
     await ensureSession();
     const served = must(await supabase().from('served_leads').select('pid').order('served_at'));
     if (!served.length) return [];
-    const rows = must(await supabase().from('lead_view').select('*').in('pid', served.map((s) => s.pid))) as LeadRow[];
+    const pids = served.map((s) => s.pid);
+    let rows = must(await supabase().from('lead_view').select('*').in('pid', pids)) as LeadRow[];
+    // Retry zoning for leads whose lookup never succeeded (no cache row). Cached PIDs cost nothing;
+    // the function enforces the daily credit cap. A failure here leaves "Not fetched" in place.
+    const unfetched = rows.filter((r) => r.zoning_precision == null).map((r) => r.pid).slice(0, 10);
+    if (unfetched.length) {
+      try {
+        await call('lookup-zoning', { pids: unfetched });
+        rows = must(await supabase().from('lead_view').select('*').in('pid', pids)) as LeadRow[];
+      } catch { /* keep current rows */ }
+    }
     const st = await statuses();
     const byPid = new Map(rows.map((r) => [r.pid, r]));
     return served.map((s) => byPid.get(s.pid)).filter(Boolean).map((r) => toLead(r!, st[r!.pid]));
