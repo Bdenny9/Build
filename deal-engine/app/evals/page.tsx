@@ -3,7 +3,11 @@ import { useState } from 'react';
 import { EvalBars, METRICS, meets } from '@/components/evals/EvalSummary';
 import { data } from '@/lib/data';
 import { useAsync } from '@/hooks/useAsync';
-import type { EvalCaseResult } from '@/types/domain';
+import type { EvalCaseResult, EvalRun } from '@/types/domain';
+
+const NAMES: Record<string, string> = { 'claude-opus-5-5': 'Opus 5.5', 'claude-sonnet-5-5': 'Sonnet 5.5', 'claude-haiku-5-5': 'Haiku 5.5' };
+const short = (m: string) => NAMES[m] ?? m;
+const models = (r: EvalRun) => `${short(r.genModel)} writes · ${short(r.judgeModel)} judges`;
 
 const TYPE_LABEL: Record<EvalCaseResult['case_type'], string> = { clean: 'Clean', planted: 'Planted traps', injected: 'Injected overstatement' };
 
@@ -18,7 +22,7 @@ export default function EvalsPage() {
   if (runs.error) return <div className="page"><div className="error">{runs.error}</div></div>;
   const all = runs.data ?? [];
   const latest = all[0];
-  const prev = all.find((r) => r.promptVersion !== latest?.promptVersion);
+  const prev = all.find((r) => r.id !== latest?.id);
   const sample = latest?.promptVersion === 'sample';
 
   return (
@@ -31,15 +35,15 @@ export default function EvalsPage() {
       {!latest ? <div className="rcard"><p className="note">No eval run yet. Run the golden set with the run-evals function.</p></div> : (
         <div className="cards">
           <section className="rcard">
-            <div className="rh"><div><h3>Latest run</h3><div className="sub">Prompt {latest.promptVersion} · {latest.model} · {latest.cases} cases · {new Date(latest.runAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div></div></div>
+            <div className="rh"><div><h3>Latest run</h3><div className="sub">Prompt {latest.promptVersion} · {models(latest)} · {latest.cases} cases · {new Date(latest.runAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div></div></div>
             <div className="rb"><EvalBars metrics={latest.metrics} /></div>
             <div className="rf note">Release rule: a new prompt version ships only if every metric meets its target and none drops.</div>
           </section>
 
           <section className="rcard">
-            <div className="rh"><div><h3>Release check</h3><div className="sub">{prev ? `${latest.promptVersion} against ${prev.promptVersion}` : 'Baseline run. The next prompt version is compared against it.'}</div></div></div>
+            <div className="rh"><div><h3>Release check</h3><div className="sub">{prev ? `${models(latest)} against ${models(prev)}` : 'Baseline run. The next run is compared against it.'}</div></div></div>
             <div className="rb tbl-wrap">
-              <table className="data"><thead><tr><th>Metric</th>{prev && <th className="num">{prev.promptVersion}</th>}<th className="num">{latest.promptVersion}</th><th>Status</th></tr></thead>
+              <table className="data"><thead><tr><th>Metric</th>{prev && <th className="num">Previous</th>}<th className="num">Latest</th><th>Status</th></tr></thead>
                 <tbody>{METRICS.map((m) => {
                   const v = latest.metrics[m.key], p = prev?.metrics[m.key];
                   const dropped = p !== undefined && (m.lowerIsBetter ? v > p : v < p);
@@ -51,10 +55,11 @@ export default function EvalsPage() {
           </section>
 
           <section className="rcard">
-            <div className="rh"><div><h3>Run history</h3><div className="sub">Newest first</div></div></div>
+            <div className="rh"><div><h3>Run history</h3><div className="sub">Newest first. Cost is one generation plus one judge call.</div></div></div>
             <div className="rb tbl-wrap">
-              <table className="data"><thead><tr><th>Run</th><th>Prompt</th><th className="num">Cases</th><th className="num">Blocked</th><th className="num">Judge recall</th></tr></thead>
-                <tbody>{all.map((r) => <tr key={r.id}><td>{new Date(r.runAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td><td>{r.promptVersion}</td><td className="num">{r.cases}</td><td className="num">{r.metrics.blocked_pct}%</td><td className="num">{r.metrics.judge_recall_pct}%</td></tr>)}</tbody>
+              <table className="data"><thead><tr><th>Writer</th><th>Judge</th><th className="num">Cases</th><th className="num">Blocked</th><th className="num">Judge recall</th><th className="num">$ / case</th><th className="num">Sec / case</th></tr></thead>
+                <tbody>{all.map((r) => <tr key={r.id}><td>{short(r.genModel)}</td><td>{short(r.judgeModel)}</td><td className="num">{r.cases}</td><td className="num">{r.metrics.blocked_pct}%</td><td className="num">{r.metrics.judge_recall_pct}%</td>
+                  <td className="num">{r.metrics.usd_per_case ? `$${r.metrics.usd_per_case.toFixed(4)}` : '—'}</td><td className="num">{r.metrics.sec_per_case || '—'}</td></tr>)}</tbody>
               </table>
             </div>
           </section>

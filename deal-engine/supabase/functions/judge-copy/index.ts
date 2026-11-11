@@ -3,7 +3,7 @@
 // The verdict is stored on the asset; approve_asset() requires it to pass AND every code check to pass.
 // Request { asset_id, rejudge? } -> { result: CheckResult, verdicts }
 import { admin, rateLimit, requireUser } from '../_shared/auth.ts';
-import { MODEL } from '../_shared/claude.ts';
+import { JUDGE_MODEL } from '../_shared/claude.ts';
 import { judgeClaims } from '../_shared/copy.ts';
 import { loadRecord } from '../_shared/facts.ts';
 import { handle, HttpError } from '../_shared/http.ts';
@@ -19,7 +19,7 @@ Deno.serve(handle(async (req, body) => {
   await rateLimit(db, userId, 'judge-copy', 60);
   const r = await loadRecord(db, asset.pid);
   const judged = await judgeClaims(r, asset.claims);
-  const judge = { ...judged, model: MODEL, judged_at: new Date().toISOString() };
+  const judge = { ...judged, model: JUDGE_MODEL, judged_at: new Date().toISOString() };
   // A failing re-judge withdraws any earlier approval.
   const patch = judged.result.pass ? { judge } : { judge, approved_at: null };
   const { error } = await db.from('assets').update(patch).eq('id', asset.id).eq('user_id', userId);

@@ -1,5 +1,5 @@
 import { codeChecks, type CheckResult, type Claim, type NumericField, type SourceKey } from './checks.ts';
-import { structured } from './claude.ts';
+import { GEN_MODEL, JUDGE_MODEL, structured, type Meter, type Model } from './claude.ts';
 import type { Record_ } from './facts.ts';
 import { HttpError } from './http.ts';
 
@@ -51,8 +51,9 @@ const CLAIMS_SCHEMA = {
 
 type RawClaim = { text: string; source: SourceKey; detail: string; numeric_field: NumericField | 'none'; numeric_value: number };
 
-export async function generateClaims(r: Record_, kind: AssetKind): Promise<Claim[]> {
+export async function generateClaims(r: Record_, kind: AssetKind, model: Model = GEN_MODEL, meter?: Meter): Promise<Claim[]> {
   const out = await structured<{ claims: RawClaim[] }>({
+    model, meter,
     system: GEN_SYSTEM,
     user: `Format: ${SHAPE[kind]}\n\nRecord (JSON, keyed by source):\n${JSON.stringify(r.record, null, 2)}`,
     schema: CLAIMS_SCHEMA,
@@ -107,8 +108,9 @@ const JUDGE_SCHEMA = {
 export interface JudgeVerdict { index: number; overstates: boolean; reason: string }
 export interface JudgeResult { result: CheckResult; verdicts: JudgeVerdict[] }
 
-export async function judgeClaims(r: Record_, claims: Claim[]): Promise<JudgeResult> {
+export async function judgeClaims(r: Record_, claims: Claim[], model: Model = JUDGE_MODEL, meter?: Meter): Promise<JudgeResult> {
   const out = await structured<{ verdicts: JudgeVerdict[] }>({
+    model, meter,
     system: JUDGE_SYSTEM,
     user: `Record (JSON, keyed by source):\n${JSON.stringify(r.record, null, 2)}\n\nClaims:\n${JSON.stringify(
       claims.map((c, i) => ({ index: i, text: c.text, source: c.source ?? 'none' })), null, 2)}`,

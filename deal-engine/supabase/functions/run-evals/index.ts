@@ -14,7 +14,7 @@
 //   judge_false_flag_pct          generated claims in clean cases the judge flags
 import { admin, isServiceCaller } from '../_shared/auth.ts';
 import { allPass, codeChecks, type Claim } from '../_shared/checks.ts';
-import { MODEL } from '../_shared/claude.ts';
+import { GEN_MODEL, isModel, JUDGE_MODEL, newMeter, type Model } from '../_shared/claude.ts';
 import { generateClaims, judgeClaims, plantedClaims, PROMPT_VERSION, type AssetKind } from '../_shared/copy.ts';
 import { loadRecord } from '../_shared/facts.ts';
 import { handle, HttpError } from '../_shared/http.ts';
@@ -23,9 +23,10 @@ interface Case { id: number; pid: string; kind: AssetKind; case_type: 'clean' | 
 
 const pct = (n: number, d: number) => (d ? Math.round((1000 * n) / d) / 10 : 100);
 
-async function runCase(db: ReturnType<typeof admin>, c: Case) {
+async function runCase(db: ReturnType<typeof admin>, c: Case, gen: Model, judgeModel: Model) {
+  const meter = newMeter();
   const r = await loadRecord(db, c.pid);
-  const generated = await generateClaims(r, c.kind);
+  const generated = await generateClaims(r, c.kind, gen, meter);
   let extra: Claim[] = [];
   if (c.case_type === 'planted') {
     const { data: sim } = await db.from('simulated_signals').select('body').eq('pid', c.pid).order('id').limit(1).maybeSingle();
@@ -35,7 +36,7 @@ async function runCase(db: ReturnType<typeof admin>, c: Case) {
   }
   const claims = [...generated, ...extra];
   const checks = codeChecks(claims, r.numeric);
-  const judge = await judgeClaims(r, claims);
+  const judge = await judgeClaims(r, claims, judgeModel, meter);
   const trapIdx = extra.map((_, i) => generated.length + i);
   return {
     case_id: c.id, pid: c.pid, kind: c.kind, case_type: c.case_type,
@@ -45,6 +46,7 @@ async function runCase(db: ReturnType<typeof admin>, c: Case) {
     grounded: checks[0].ratio ?? 0, numbers: checks[1].ratio ?? 1, banned: !checks[2].pass,
     traps: trapIdx.length, traps_flagged: trapIdx.filter((i) => judge.verdicts[i]?.overstates).length,
     generated: generated.length, generated_flagged: c.case_type === 'clean' ? judge.verdicts.slice(0, generated.length).filter((v) => v.overstates).length : 0,
+    usd: meter.usd, ms: meter.ms, input_tokens: meter.input, output_tokens: meter.output,
     claims, checks, verdicts: judge.verdicts,
   };
 }
@@ -64,12 +66,16 @@ function score(results: CaseResult[], failed: number) {
     judge_false_flag_pct: pct(sum(clean.map((r) => r.generated_flagged)), sum(clean.map((r) => r.generated))),
     banned_hits: clean.filter((r) => r.banned).length,
     failed_cases: failed,
+    // Cost and speed per case (one generation + one judge call). Older results without a meter count as 0.
+    usd_per_case: results.length ? Math.round((sum(results.map((r) => r.usd ?? 0)) / results.length) * 10000) / 10000 : 0,
+    sec_per_case: results.length ? Math.round(sum(results.map((r) => r.ms ?? 0)) / results.length / 100) / 10 : 0,
   };
 }
 
 // A full run takes longer than one function invocation allows, so callers send a few case_ids at a time
 // and pass back the run_id they got: results accumulate on one eval_runs row and metrics are recomputed.
-// Request { case_ids?: number[], run_id?: uuid } -> { id, prompt_version, cases, metrics, failures }
+// Request { case_ids?: number[], run_id?: uuid, gen_model?, judge_model? } -> { id, prompt_version, cases, metrics, failures }
+// Models default to the GEN_MODEL / JUDGE_MODEL secrets, so a sweep compares models without redeploying.
 Deno.serve(handle(async (req, body) => {
   if (!isServiceCaller(req)) throw new HttpError(403, 'run-evals requires the service role');
   if (!Deno.env.get('ANTHROPIC_API_KEY')) throw new HttpError(503, 'ANTHROPIC_API_KEY secret is not set');
@@ -80,17 +86,21 @@ Deno.serve(handle(async (req, body) => {
   if (error) throw new Error(error.message);
   if (!cases?.length) throw new HttpError(400, 'No golden cases');
   if (cases.length > 6) throw new HttpError(400, 'Send at most 6 case_ids per call and pass run_id to continue a run');
+  const gen = body.gen_model === undefined ? GEN_MODEL : body.gen_model;
+  const judgeModel = body.judge_model === undefined ? JUDGE_MODEL : body.judge_model;
+  if (!isModel(gen) || !isModel(judgeModel)) throw new HttpError(400, 'Unknown gen_model or judge_model');
 
   let prior: { results: CaseResult[]; failures: { case_id: number; error: string }[] } = { results: [], failures: [] };
   if (body.run_id) {
-    const { data: run } = await db.from('eval_runs').select('prompt_version, results').eq('id', String(body.run_id)).maybeSingle();
+    const { data: run } = await db.from('eval_runs').select('prompt_version, gen_model, judge_model, results').eq('id', String(body.run_id)).maybeSingle();
     if (!run) throw new HttpError(404, 'No such run');
     if (run.prompt_version !== PROMPT_VERSION) throw new HttpError(409, `Run was started on ${run.prompt_version}`);
+    if (run.gen_model !== gen || run.judge_model !== judgeModel) throw new HttpError(409, `Run uses ${run.gen_model} / ${run.judge_model}`);
     prior = run.results;
   }
 
   const fresh: CaseResult[] = [], failures: { case_id: number; error: string }[] = [];
-  const batch = await Promise.allSettled((cases as Case[]).map((c) => runCase(db, c)));
+  const batch = await Promise.allSettled((cases as Case[]).map((c) => runCase(db, c, gen, judgeModel)));
   batch.forEach((b, j) => b.status === 'fulfilled' ? fresh.push(b.value)
     : failures.push({ case_id: (cases as Case[])[j].id, error: String((b.reason as Error)?.message ?? b.reason) }));
   if (!fresh.length) throw new HttpError(502, `Every case failed: ${failures[0]?.error ?? 'unknown error'}`);
@@ -98,11 +108,11 @@ Deno.serve(handle(async (req, body) => {
   const done = new Set(fresh.map((r) => r.case_id));
   const results = [...prior.results.filter((r) => !done.has(r.case_id)), ...fresh];
   const allFailures = [...prior.failures.filter((f) => !done.has(f.case_id)), ...failures];
-  const row = { prompt_version: PROMPT_VERSION, model: MODEL, cases: results.length, metrics: score(results, allFailures.length), results: { results, failures: allFailures } };
+  const row = { prompt_version: PROMPT_VERSION, model: judgeModel, gen_model: gen, judge_model: judgeModel, cases: results.length, metrics: score(results, allFailures.length), results: { results, failures: allFailures } };
 
   const saved = body.run_id
     ? await db.from('eval_runs').update(row).eq('id', String(body.run_id)).select('id').single()
     : await db.from('eval_runs').insert(row).select('id').single();
   if (saved.error) throw new Error(saved.error.message);
-  return { id: saved.data.id, prompt_version: PROMPT_VERSION, cases: results.length, metrics: row.metrics, failures: allFailures };
+  return { id: saved.data.id, prompt_version: PROMPT_VERSION, gen_model: gen, judge_model: judgeModel, cases: results.length, metrics: row.metrics, failures: allFailures };
 }));

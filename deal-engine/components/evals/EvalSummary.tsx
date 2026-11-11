@@ -2,7 +2,8 @@
 import type { EvalMetrics } from '@/types/domain';
 
 /** Each metric with its release target. A prompt version ships only if every metric meets its target and none drops. */
-export const METRICS: { key: keyof EvalMetrics; label: string; target: number; lowerIsBetter?: boolean; hint: string }[] = [
+type QualityKey = Exclude<keyof EvalMetrics, 'usd_per_case' | 'sec_per_case' | 'banned_hits' | 'failed_cases'>;
+export const METRICS: { key: QualityKey; label: string; target: number; lowerIsBetter?: boolean; hint: string }[] = [
   { key: 'grounded_pct', label: 'Claims grounded', target: 100, hint: 'Clean copy: share of claims that cite a buyer-safe source' },
   { key: 'numbers_pct', label: 'Numbers match', target: 100, hint: 'Clean copy: figures that equal the value recomputed in code' },
   { key: 'clean_pass_pct', label: 'Clean copy passes', target: 90, hint: 'Clean cases that pass every check and the judge' },

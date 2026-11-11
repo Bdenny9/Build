@@ -89,7 +89,7 @@ export const mockProvider: DataProvider = {
 
 /** Mock mode has no eval history. This sample is labeled as such in the UI. */
 const SAMPLE_RUN: EvalRun = {
-  id: 'sample', promptVersion: 'sample', model: 'mock', runAt: '2026-11-11T00:00:00Z', cases: 18,
+  id: 'sample', promptVersion: 'sample', model: 'mock', genModel: 'mock', judgeModel: 'mock', runAt: '2026-11-11T00:00:00Z', cases: 18,
   metrics: { grounded_pct: 100, numbers_pct: 100, clean_pass_pct: 100, blocked_pct: 100, judge_recall_pct: 100, judge_false_flag_pct: 0, banned_hits: 0, failed_cases: 0 },
   results: [],
 };

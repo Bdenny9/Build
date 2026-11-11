@@ -90,6 +90,8 @@ export interface JudgeResult { result: CheckResult; verdicts: JudgeVerdict[] }
 export interface EvalMetrics {
   grounded_pct: number; numbers_pct: number; clean_pass_pct: number; blocked_pct: number;
   judge_recall_pct: number; judge_false_flag_pct: number; banned_hits: number; failed_cases: number;
+  /** Present on runs recorded after metering was added. */
+  usd_per_case?: number; sec_per_case?: number;
 }
 export interface EvalCaseResult {
   case_id: number; pid: string; kind: AssetKind; case_type: 'clean' | 'planted' | 'injected';
@@ -100,6 +102,8 @@ export interface EvalRun {
   id: string;
   promptVersion: string;
   model: string;
+  genModel: string;
+  judgeModel: string;
   runAt: string;
   cases: number;
   metrics: EvalMetrics;

@@ -220,7 +220,7 @@ select,input[type=number],input[type=text],input[type=date],textarea{background:
 .canvas-h{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
 .canvas-h h2{font-size:24px;font-weight:400;letter-spacing:-.01em}
 .canvas-h .right{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;align-items:start}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;align-items:start}
 .cards .span2{grid-column:span 2}
 @media (max-width:720px){.cards .span2{grid-column:auto}}
 .rcard{background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);padding:18px 16px 16px;min-width:0}
