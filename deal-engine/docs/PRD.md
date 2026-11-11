@@ -201,7 +201,7 @@ All edge functions:
 Found while reading the prototype against this spec.
 
 1. **Class code 250.** The README load step includes code 250, but `ClassCode`, `TYPES` and the `parcels` check constraint do not. Decide whether to add it (with label and spread) or drop it from the load.
-2. **Hard-coded date in `get_comps`.** The SQL uses `date '2026-11-10'`. Use `parcels.data_as_of` or a parameter so a data refresh does not silently shift the comp window.
+2. ~~**Hard-coded date in `get_comps`.**~~ Fixed: the comp window now runs from the subject's `data_as_of`.
 3. **Regeneration cost.** `ListingWorkspace` calls `generateAsset` on every tab switch and every Plant-errors toggle, so each one is a new model call and a new `assets` row. See L9.
 4. **Approval is not reloaded.** Approved state is held in component state. On reload, the asset regenerates and approval disappears even though `approved_at` was written. See L5.
 5. **Simulated signals count toward the score.** Each simulated signal adds a point, so a mock signal can lift a lead from Moderate to Strong. Either exclude them from the score or show the score with and without them.

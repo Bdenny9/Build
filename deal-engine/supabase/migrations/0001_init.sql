@@ -108,17 +108,17 @@ create view public.deal_view with (security_invoker = true) as
 select d.id, d.pid, p.address, p.class_code as type_label, d.price, d.close_date, d.net_to_broker
 from public.deals d join public.parcels p on p.pid = d.pid;
 
--- Comps: same class, real sale in the last 3 years, nearest first.
+-- Comps: same class, real sale in the 3 years before the snapshot date, nearest first.
 create function public.get_comps(p_pid text, p_limit int default 6)
 returns table (pid text, address text, sale_date date, sale_price numeric, footprint_sf numeric)
-language sql stable security invoker as $$
+language sql stable security invoker set search_path = '' as $$
   select c.pid, c.address, c.sale_date, c.sale_price, c.footprint_sf
   from public.parcels s
   join public.parcels c on c.class_code = s.class_code and c.pid <> s.pid
   where s.pid = p_pid
     and c.sale_price >= 10000
     and c.footprint_sf > 0
-    and c.sale_date >= (date '2026-11-10' - interval '3 years')
+    and c.sale_date >= (s.data_as_of - interval '3 years')
   order by (c.lat - s.lat)^2 + (c.lng - s.lng)^2
   limit p_limit;
 $$;
