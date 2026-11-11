@@ -2,7 +2,7 @@
 
 export type ClassCode = '200' | '304' | '500' | '530' | '580' | '630' | '650' | '700';
 
-export type SourceKey = 'parcel' | 'foot' | 'fema' | 'zoning' | 'fred' | 'comps' | 'assume' | 'calc' | 'sim';
+export type { SourceKey } from '@/supabase/functions/_shared/checks';
 
 export interface Parcel {
   pid: string;
@@ -66,22 +66,9 @@ export interface Activity {
 
 export type AssetKind = 'description' | 'highlights' | 'mailer' | 'email';
 
-/** One sentence or bullet of generated copy. The model must return claims, never free text. */
-export interface Claim {
-  text: string;
-  source: SourceKey | null;
-  detail: string;
-  /** Present when the claim states a number that code can recompute. */
-  numeric?: { field: 'footprintSf' | 'acreage' | 'medianPsf' | 'capRate'; value: number };
-}
-
-export interface CheckResult {
-  name: string;
-  pass: boolean;
-  detail: string;
-  ratio?: number;
-  kind: 'code' | 'llm';
-}
+// Claim and CheckResult live with the code checks so server and browser share one definition.
+export type { Claim, CheckResult } from '@/supabase/functions/_shared/checks';
+import type { Claim, CheckResult } from '@/supabase/functions/_shared/checks';
 
 export interface EvalResult { pass: boolean; checks: CheckResult[] }
 
@@ -92,6 +79,21 @@ export interface Asset {
   claims: Claim[];
   promptVersion: string;
   approvedAt: string | null;
+  /** Stored server-side; present for Supabase assets. */
+  codeChecks?: CheckResult[];
+  judge?: JudgeResult | null;
+}
+
+export interface JudgeVerdict { index: number; overstates: boolean; reason: string }
+export interface JudgeResult { result: CheckResult; verdicts: JudgeVerdict[] }
+
+export interface EvalRun {
+  id: string;
+  promptVersion: string;
+  model: string;
+  runAt: string;
+  cases: number;
+  metrics: Record<string, number>;
 }
 
 export interface Deal {
