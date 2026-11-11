@@ -14,7 +14,6 @@ export function BuyerProfile({ lead: l, value }: { lead: Lead; value: number }) 
   if (/^(A|V)/.test(l.floodZone)) b.push({ n: 'Flood-aware buyers', w: `Zone ${l.floodZone}: buyers will price flood insurance, so lead with elevation data if available.` });
   return (
     <>
-      <p className="note" style={{ marginTop: 0 }}>Ranked by rules on zoning, type, lot size and flood zone. No AI judgment in the ranking.</p>
       <div className="buyers">{b.map((x) => <div key={x.n} className="buyer"><b>{x.n}</b><span className="note">{x.w}</span></div>)}</div>
     </>
   );

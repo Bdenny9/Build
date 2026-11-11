@@ -12,8 +12,6 @@
 //   blocked_pct                   planted and injected cases that are blocked (must be 100)
 //   judge_recall_pct              planted and injected claims the judge flags
 //   judge_false_flag_pct          generated claims in clean cases the judge flags
-//
-// Request { case_ids?: number[] } -> { id, prompt_version, metrics }
 import { admin, isServiceCaller } from '../_shared/auth.ts';
 import { allPass, codeChecks, type Claim } from '../_shared/checks.ts';
 import { MODEL } from '../_shared/claude.ts';
@@ -51,6 +49,27 @@ async function runCase(db: ReturnType<typeof admin>, c: Case) {
   };
 }
 
+type CaseResult = Awaited<ReturnType<typeof runCase>>;
+
+function score(results: CaseResult[], failed: number) {
+  const clean = results.filter((r) => r.case_type === 'clean'), bad = results.filter((r) => r.case_type !== 'clean');
+  const mean = (xs: number[]) => (xs.length ? Math.round((1000 * xs.reduce((a, b) => a + b, 0)) / xs.length) / 10 : 100);
+  const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+  return {
+    grounded_pct: mean(clean.map((r) => r.grounded)),
+    numbers_pct: mean(clean.map((r) => r.numbers)),
+    clean_pass_pct: pct(clean.filter((r) => r.passed).length, clean.length),
+    blocked_pct: pct(bad.filter((r) => !r.passed).length, bad.length),
+    judge_recall_pct: pct(sum(bad.map((r) => r.traps_flagged)), sum(bad.map((r) => r.traps))),
+    judge_false_flag_pct: pct(sum(clean.map((r) => r.generated_flagged)), sum(clean.map((r) => r.generated))),
+    banned_hits: clean.filter((r) => r.banned).length,
+    failed_cases: failed,
+  };
+}
+
+// A full run takes longer than one function invocation allows, so callers send a few case_ids at a time
+// and pass back the run_id they got: results accumulate on one eval_runs row and metrics are recomputed.
+// Request { case_ids?: number[], run_id?: uuid } -> { id, prompt_version, cases, metrics, failures }
 Deno.serve(handle(async (req, body) => {
   if (!isServiceCaller(req)) throw new HttpError(403, 'run-evals requires the service role');
   if (!Deno.env.get('ANTHROPIC_API_KEY')) throw new HttpError(503, 'ANTHROPIC_API_KEY secret is not set');
@@ -60,34 +79,30 @@ Deno.serve(handle(async (req, body) => {
   const { data: cases, error } = await q;
   if (error) throw new Error(error.message);
   if (!cases?.length) throw new HttpError(400, 'No golden cases');
+  if (cases.length > 6) throw new HttpError(400, 'Send at most 6 case_ids per call and pass run_id to continue a run');
 
-  // Three at a time keeps well inside the function's wall-clock limit for ~20 cases.
-  const results: Awaited<ReturnType<typeof runCase>>[] = [], failures: { case_id: number; error: string }[] = [];
-  for (let i = 0; i < cases.length; i += 3) {
-    const batch = await Promise.allSettled((cases as Case[]).slice(i, i + 3).map((c) => runCase(db, c)));
-    batch.forEach((b, j) => b.status === 'fulfilled' ? results.push(b.value)
-      : failures.push({ case_id: (cases as Case[])[i + j].id, error: String((b.reason as Error)?.message ?? b.reason) }));
+  let prior: { results: CaseResult[]; failures: { case_id: number; error: string }[] } = { results: [], failures: [] };
+  if (body.run_id) {
+    const { data: run } = await db.from('eval_runs').select('prompt_version, results').eq('id', String(body.run_id)).maybeSingle();
+    if (!run) throw new HttpError(404, 'No such run');
+    if (run.prompt_version !== PROMPT_VERSION) throw new HttpError(409, `Run was started on ${run.prompt_version}`);
+    prior = run.results;
   }
 
-  if (!results.length) throw new HttpError(502, `Every case failed: ${failures[0]?.error ?? 'unknown error'}`);
+  const fresh: CaseResult[] = [], failures: { case_id: number; error: string }[] = [];
+  const batch = await Promise.allSettled((cases as Case[]).map((c) => runCase(db, c)));
+  batch.forEach((b, j) => b.status === 'fulfilled' ? fresh.push(b.value)
+    : failures.push({ case_id: (cases as Case[])[j].id, error: String((b.reason as Error)?.message ?? b.reason) }));
+  if (!fresh.length) throw new HttpError(502, `Every case failed: ${failures[0]?.error ?? 'unknown error'}`);
 
-  const clean = results.filter((r) => r.case_type === 'clean'), bad = results.filter((r) => r.case_type !== 'clean');
-  const mean = (xs: number[]) => (xs.length ? Math.round((1000 * xs.reduce((a, b) => a + b, 0)) / xs.length) / 10 : 100);
-  const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
-  const metrics = {
-    grounded_pct: mean(clean.map((r) => r.grounded)),
-    numbers_pct: mean(clean.map((r) => r.numbers)),
-    clean_pass_pct: pct(clean.filter((r) => r.passed).length, clean.length),
-    blocked_pct: pct(bad.filter((r) => !r.passed).length, bad.length),
-    judge_recall_pct: pct(sum(bad.map((r) => r.traps_flagged)), sum(bad.map((r) => r.traps))),
-    judge_false_flag_pct: pct(sum(clean.map((r) => r.generated_flagged)), sum(clean.map((r) => r.generated))),
-    banned_hits: clean.filter((r) => r.banned).length,
-    failed_cases: failures.length,
-  };
+  const done = new Set(fresh.map((r) => r.case_id));
+  const results = [...prior.results.filter((r) => !done.has(r.case_id)), ...fresh];
+  const allFailures = [...prior.failures.filter((f) => !done.has(f.case_id)), ...failures];
+  const row = { prompt_version: PROMPT_VERSION, model: MODEL, cases: results.length, metrics: score(results, allFailures.length), results: { results, failures: allFailures } };
 
-  const { data: run, error: insErr } = await db.from('eval_runs').insert({
-    prompt_version: PROMPT_VERSION, model: MODEL, cases: results.length, metrics, results: { results, failures },
-  }).select('id').single();
-  if (insErr) throw new Error(insErr.message);
-  return { id: run.id, prompt_version: PROMPT_VERSION, metrics, failures };
+  const saved = body.run_id
+    ? await db.from('eval_runs').update(row).eq('id', String(body.run_id)).select('id').single()
+    : await db.from('eval_runs').insert(row).select('id').single();
+  if (saved.error) throw new Error(saved.error.message);
+  return { id: saved.data.id, prompt_version: PROMPT_VERSION, cases: results.length, metrics: row.metrics, failures: allFailures };
 }));

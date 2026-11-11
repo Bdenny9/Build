@@ -87,13 +87,23 @@ export interface Asset {
 export interface JudgeVerdict { index: number; overstates: boolean; reason: string }
 export interface JudgeResult { result: CheckResult; verdicts: JudgeVerdict[] }
 
+export interface EvalMetrics {
+  grounded_pct: number; numbers_pct: number; clean_pass_pct: number; blocked_pct: number;
+  judge_recall_pct: number; judge_false_flag_pct: number; banned_hits: number; failed_cases: number;
+}
+export interface EvalCaseResult {
+  case_id: number; pid: string; kind: AssetKind; case_type: 'clean' | 'planted' | 'injected';
+  passed: boolean; code_pass: boolean; judge_pass: boolean; traps: number; traps_flagged: number;
+  claims: Claim[]; verdicts: JudgeVerdict[];
+}
 export interface EvalRun {
   id: string;
   promptVersion: string;
   model: string;
   runAt: string;
   cases: number;
-  metrics: Record<string, number>;
+  metrics: EvalMetrics;
+  results?: EvalCaseResult[];
 }
 
 export interface Deal {

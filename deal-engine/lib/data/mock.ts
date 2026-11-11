@@ -1,14 +1,14 @@
 import { ASSUMPTIONS, TYPES } from '@/lib/calc/constants';
-import { BANNED } from '@/lib/calc/evals';
+import { BANNED, allPass, codeChecks } from '@/lib/calc/evals';
 import { estimateValue } from '@/lib/calc/value';
 import { money } from '@/lib/calc/format';
-import type { Activity, Asset, Deal, Lead, LeadStatus } from '@/types/domain';
+import type { Activity, Asset, Deal, EvalRun, JudgeResult, Lead, LeadStatus } from '@/types/domain';
 import { LEADS, TREASURY_10Y, sampleComps } from './fixtures';
 import { templateClaims } from './copy';
 import type { DataProvider } from './provider';
 
 const KEY = 'deal-engine-mock-v1';
-interface Store { served: string[]; status: Record<string, LeadStatus>; activities: Activity[]; listings: string[]; assets: Asset[]; deals: Deal[] }
+interface Store { served: string[]; status: Record<string, LeadStatus>; activities: Activity[]; listings: string[]; assets: (Asset & { plant?: boolean })[]; deals: Deal[] }
 const empty = (): Store => ({
   served: [], status: {}, activities: [], listings: [], assets: [],
   deals: [
@@ -48,14 +48,36 @@ export const mockProvider: DataProvider = {
     const l = LEADS.find((x) => x.pid === pid)!;
     const v = estimateValue(l.footprintSf, sampleComps(l));
     const s = load();
-    const asset: Asset = { id: id(), pid, kind, claims: templateClaims(l, v.medianPsf, kind, opts?.plantErrors), promptVersion: 'v2-mock', approvedAt: null };
+    const plant = !!opts?.plantErrors;
+    const cached = !opts?.regenerate && [...s.assets].reverse().find((a) => a.pid === pid && a.kind === kind && !!a.plant === plant);
+    if (cached) return cached;
+    const claims = templateClaims(l, v.medianPsf, kind, plant);
+    const facts = { footprintSf: l.footprintSf, acreage: l.acreage, medianPsf: Math.round(v.medianPsf) };
+    const asset = { id: id(), pid, kind, claims, promptVersion: 'mock-template', approvedAt: null, codeChecks: codeChecks(claims, facts), judge: null, plant };
     s.assets.push(asset); save(s); return asset;
   },
-  async judgeAsset(claims) {
-    const flagged = claims.filter((c) => BANNED.test(c.text) || /steps from/i.test(c.text)).length;
-    return { name: 'LLM judge: overstating', kind: 'llm', pass: flagged === 0, detail: flagged ? `${flagged} sentence${flagged > 1 ? 's' : ''} judged to overstate the source` : 'Each sentence fairly reflects its source' };
+  async listAssets(pid) { return load().assets.filter((a) => a.pid === pid && !a.plant).reverse(); },
+  async judgeAsset(asset) {
+    // Stand-in for the judge-copy function: flags unsourced, simulated and overstating sentences.
+    const verdicts = asset.claims.map((c, index) => {
+      const over = !c.source || c.source === 'sim' || BANNED.test(c.text) || /steps from/i.test(c.text);
+      return { index, overstates: over, reason: over ? 'Not supported by the cited source.' : 'Matches the cited source.' };
+    });
+    const flagged = verdicts.filter((v) => v.overstates).length;
+    const judge: JudgeResult = { verdicts, result: { name: 'LLM judge: overstating', kind: 'llm', pass: !flagged, detail: flagged ? `${flagged} claim${flagged > 1 ? 's' : ''} judged to overstate the source` : 'Each claim fairly reflects its source' } };
+    const s = load(); const a = s.assets.find((x) => x.id === asset.id); if (a) a.judge = judge; save(s);
+    return judge;
   },
-  async approveAsset(assetId) { const s = load(); const a = s.assets.find((x) => x.id === assetId); if (a) a.approvedAt = new Date().toISOString(); save(s); },
+  async approveAsset(assetId) {
+    const s = load(); const a = s.assets.find((x) => x.id === assetId);
+    if (!a) throw new Error('No such asset');
+    if (!allPass(a.codeChecks ?? [])) throw new Error('Blocked: a code check failed');
+    if (!a.judge?.result.pass) throw new Error('Blocked: the judge has not passed this copy');
+    a.approvedAt ??= new Date().toISOString(); save(s); return a.approvedAt;
+  },
+
+  async listEvalRuns() { return [SAMPLE_RUN]; },
+  async getEvalRun(runId) { return runId === SAMPLE_RUN.id ? SAMPLE_RUN : null; },
 
   async markSold(input) {
     const s = load(); const l = LEADS.find((x) => x.pid === input.pid)!;
@@ -63,4 +85,11 @@ export const mockProvider: DataProvider = {
     s.deals.unshift(d); s.status[input.pid] = 'Sold'; save(s); return d;
   },
   async listDeals() { return load().deals; },
+};
+
+/** Mock mode has no eval history. This sample is labeled as such in the UI. */
+const SAMPLE_RUN: EvalRun = {
+  id: 'sample', promptVersion: 'sample', model: 'mock', runAt: '2026-11-11T00:00:00Z', cases: 18,
+  metrics: { grounded_pct: 100, numbers_pct: 100, clean_pass_pct: 100, blocked_pct: 100, judge_recall_pct: 100, judge_false_flag_pct: 0, banned_hits: 0, failed_cases: 0 },
+  results: [],
 };

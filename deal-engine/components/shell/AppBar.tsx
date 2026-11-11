@@ -1,12 +1,13 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Building2, ChevronDown, Crosshair, Megaphone, Receipt } from 'lucide-react';
+import { BarChart3, Building2, Check, ChevronDown, Crosshair, LayoutGrid, Megaphone, Receipt } from 'lucide-react';
 
 const TABS = [
-  { href: '/prospecting', label: 'Prospect', Icon: Crosshair },
-  { href: '/listings', label: 'Listings', Icon: Megaphone },
-  { href: '/payout', label: 'Payout', Icon: Receipt },
+  { href: '/prospecting', label: 'Prospecting', Icon: Crosshair },
+  { href: '/listings', label: 'Marketing', Icon: Megaphone },
+  { href: '/payout', label: 'Back Office', Icon: Receipt },
+  { href: '/evals', label: 'Reports', Icon: BarChart3 },
 ];
 
 export function AppBar() {
@@ -14,7 +15,8 @@ export function AppBar() {
   return (
     <header className="appbar">
       <div className="appbar-in">
-        <Link className="logo" href="/prospecting"><Building2 aria-hidden /> Deal Engine</Link>
+        <span className="apps" aria-hidden><LayoutGrid /></span>
+        <Link className="logo" href="/prospecting"><Building2 aria-hidden />Deal Engine</Link>
         <nav className="nav" aria-label="Deal stages">
           {TABS.map(({ href, label, Icon }) => (
             <Link key={href} href={href} aria-current={path.startsWith(href) ? 'page' : undefined}>
@@ -22,7 +24,11 @@ export function AppBar() {
             </Link>
           ))}
         </nav>
-        <div className="note-r">Independent prototype by Brook Denny · not affiliated with Buildout</div>
+        <div className="right">
+          <div className="note-r">Independent prototype by Brook Denny · not affiliated with Buildout</div>
+          <div className="tick" title="Every figure cites its source"><span><Check aria-hidden /></span></div>
+          <div className="me"><div className="avatar" aria-hidden>V</div><span>Visitor</span><ChevronDown className="ico" aria-hidden /></div>
+        </div>
       </div>
     </header>
   );

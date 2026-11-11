@@ -234,9 +234,9 @@ Found while reading the prototype against this spec.
 | **M0. Prototype** (done) | Mock provider, all four stages, calc tests | `npm test` and `npm run typecheck` pass in mock mode |
 | **M1. Spec fixes** | Resolve §11 items 1 to 7 that touch schema or types | Migration and types agree. Decisions recorded here. In progress: items 1, 2 and 8 done. |
 | **M2. Data load** (done 2026-11-11) | Parcels, footprints, FEMA, rates, candidate flag, seeded signals | Loaded: 7,327 parcels, 4,043 lead candidates, 4,166 simulated signals, 779 monthly rates (through Nov 2026). |
-| **M3. Backend** | Run migration, anonymous auth, `serve-leads`, `lookup-zoning`, rate limits | `NEXT_PUBLIC_DATA_MODE=supabase` runs Prospect and Outreach end to end. A second anonymous user sees none of the first user's rows. |
-| **M4. AI functions** | `draft-outreach`, `generate-copy`, `judge-copy`, asset reuse (L9), approval reload (L5) | Planted errors are blocked. Clean copy passes and can be approved. |
-| **M5. Evals** | Golden set, `eval_runs`, eval panel reads real data (L8) | Current prompt version has a recorded baseline |
+| **M3. Backend** (deployed 2026-11-11) | Run migration, anonymous auth, `serve-leads`, `lookup-zoning`, rate limits | `NEXT_PUBLIC_DATA_MODE=supabase` runs Prospect and Outreach end to end. A second anonymous user sees none of the first user's rows. |
+| **M4. AI functions** (deployed 2026-11-11) | `draft-outreach`, `generate-copy`, `judge-copy`, asset reuse (L9), approval reload (L5) | Planted errors are blocked. Clean copy passes and can be approved. |
+| **M5. Evals** (baseline recorded 2026-11-11) | Golden set, `eval_runs`, eval panel reads real data (L8) | Baseline `copy-v1`: 18 cases, every metric at target. Next: harder, subtler injected cases. |
 | **M6. Deploy and polish** | Vercel, server-side photos (P11), stub cleanup (P12), multi-listing payout (C4) | §12 targets met on the deployed URL |
 
 ## 14. Open questions

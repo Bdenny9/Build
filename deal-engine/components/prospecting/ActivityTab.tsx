@@ -48,6 +48,12 @@ export function ActivityTab({ lead, onStatus }: { lead: Lead; onStatus: (s: Lead
       </ul>
       <div className="sec-h" style={{ marginTop: 12 }}>Outreach draft <span className="tag ai">AI draft</span></div>
       {draft.loading ? <p className="note">Drafting from the lead record…</p> : draft.error ? <div className="error">{draft.error}</div> : <div className="draft">{draft.data?.text}</div>}
+      {draft.data?.check && (
+        <div className={`check ${draft.data.check.pass ? 'pass' : 'fail'}`}>
+          <div className="dot" aria-hidden>{draft.data.check.pass ? '✓' : '!'}</div>
+          <div><div className="what">{draft.data.check.name}</div><div className="det">{draft.data.check.detail}</div></div>
+        </div>
+      )}
       <div className="form-row" style={{ marginTop: 10 }}>
         <button className="btn btn-lime" disabled={busy || !draft.data} onClick={() => log('Email', 'Approved outreach draft, logged as sent')}>Approve and log as sent</button>
         <span className="note">Nothing is emailed. Approval logs the touch.</span>

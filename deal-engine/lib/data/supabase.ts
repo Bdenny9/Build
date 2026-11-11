@@ -1,5 +1,5 @@
 import { ensureSession, supabase } from '@/lib/supabase/client';
-import type { Activity, Asset, Claim, CheckResult, Comp, Deal, Lead, LeadStatus } from '@/types/domain';
+import type { Activity, Asset, AssetKind, Claim, CheckResult, Comp, Deal, EvalMetrics, EvalRun, JudgeResult, Lead, LeadStatus } from '@/types/domain';
 import type { DataProvider } from './provider';
 
 // Row shapes match supabase/migrations/0001_init.sql
@@ -27,9 +27,25 @@ const toLead = (r: LeadRow, status: LeadStatus = 'New'): Lead => ({
 async function call<T>(fn: string, body: Record<string, unknown>): Promise<T> {
   await ensureSession();
   const { data, error } = await supabase().functions.invoke(fn, { body });
-  if (error) throw new Error(`${fn} failed: ${error.message}`);
+  if (error) {
+    // Surface the function's own message (rate limit, not served, blocked) instead of a generic HTTP error.
+    let msg = error.message;
+    try { const j = await (error as { context?: Response }).context?.json(); if (j?.error) msg = j.error; } catch { /* not JSON */ }
+    throw new Error(msg);
+  }
   return data as T;
 }
+
+interface AssetRow { id: string; claims: Claim[]; prompt_version: string; code_checks: CheckResult[] | null; judge: JudgeResult | null; approved_at: string | null }
+const toAsset = (pid: string, kind: AssetKind, r: AssetRow): Asset => ({
+  id: r.id, pid, kind, claims: r.claims, promptVersion: r.prompt_version, approvedAt: r.approved_at,
+  codeChecks: r.code_checks ?? undefined, judge: r.judge,
+});
+interface EvalRow { id: string; prompt_version: string; model: string; run_at: string; cases: number; metrics: EvalMetrics; results?: { results: EvalRun['results'] } }
+const toRun = (r: EvalRow): EvalRun => ({
+  id: r.id, promptVersion: r.prompt_version, model: r.model, runAt: r.run_at, cases: r.cases, metrics: r.metrics,
+  results: r.results?.results,
+});
 async function uid() { const s = await ensureSession(); return s!.user.id; }
 async function statuses(): Promise<Record<string, LeadStatus>> {
   const { data } = await supabase().from('lead_status').select('pid,status');
@@ -81,7 +97,7 @@ export const supabaseProvider: DataProvider = {
     const r = must(await supabase().from('activities').insert({ user_id: await uid(), pid, kind, body: text }).select().single()) as { id: string; created_at: string };
     return { id: r.id, pid, kind, text, createdAt: r.created_at };
   },
-  draftOutreach: (pid) => call<{ text: string }>('draft-outreach', { pid }),
+  draftOutreach: (pid) => call<{ text: string; check?: CheckResult }>('draft-outreach', { pid }),
 
   async createListing(pid) {
     must(await supabase().from('listings').upsert({ user_id: await uid(), pid }));
@@ -93,12 +109,32 @@ export const supabaseProvider: DataProvider = {
     return rows.map((r) => r.pid);
   },
   async generateAsset(pid, kind, opts) {
-    // generate-copy returns Claim[] (JSON only) built from the listing record it loads server-side.
-    const r = await call<{ id: string; claims: Claim[]; prompt_version: string }>('generate-copy', { pid, kind, plant_errors: !!opts?.plantErrors });
-    return { id: r.id, pid, kind, claims: r.claims, promptVersion: r.prompt_version, approvedAt: null } satisfies Asset;
+    // generate-copy builds Claim[] server-side from the listing record, runs the code checks and stores both.
+    const r = await call<AssetRow>('generate-copy', { pid, kind, plant_errors: !!opts?.plantErrors, regenerate: !!opts?.regenerate });
+    return toAsset(pid, kind, r);
   },
-  judgeAsset: (claims) => call<CheckResult>('judge-copy', { claims }),
-  async approveAsset(assetId) { must(await supabase().from('assets').update({ approved_at: new Date().toISOString() }).eq('id', assetId)); },
+  async listAssets(pid) {
+    await ensureSession();
+    const rows = must(await supabase().from('assets').select('id, kind, claims, prompt_version, code_checks, judge, approved_at, plant_errors')
+      .eq('pid', pid).eq('plant_errors', false).order('created_at', { ascending: false })) as (AssetRow & { kind: AssetKind })[];
+    return rows.map((r) => toAsset(pid, r.kind, r));
+  },
+  judgeAsset: (asset) => call<JudgeResult>('judge-copy', { asset_id: asset.id }),
+  async approveAsset(assetId) {
+    await ensureSession();
+    return must(await supabase().rpc('approve_asset', { p_asset_id: assetId })) as string;
+  },
+
+  async listEvalRuns() {
+    // Runs with no completed cases are failed starts, not results.
+    const rows = must(await supabase().from('eval_runs').select('id, prompt_version, model, run_at, cases, metrics')
+      .gt('cases', 0).order('run_at', { ascending: false }).limit(20)) as EvalRow[];
+    return rows.map(toRun);
+  },
+  async getEvalRun(id) {
+    const row = must(await supabase().from('eval_runs').select('*').eq('id', id).maybeSingle()) as EvalRow | null;
+    return row ? toRun(row) : null;
+  },
 
   async markSold(input) {
     const r = must(await supabase().from('deals').insert({

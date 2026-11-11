@@ -31,19 +31,23 @@ Switch to the real backend with `NEXT_PUBLIC_DATA_MODE=supabase` plus the two pu
 
 The UI never calls Anthropic or Zoneomics directly. Those keys live only in Supabase function secrets.
 
-## Edge Functions to build (`supabase/functions/`)
+## Edge Functions (`supabase/functions/`)
 
-All require the caller's Supabase JWT, enforce a per-user rate limit, and never return a key.
+Deployed with `verify_jwt` off; each function checks the caller itself. Keys live only in function secrets
+(`ANTHROPIC_API_KEY`, `ZONING_API_KEY`, optional `ZONEOMICS_DAILY_CAP`, `ZONEOMICS_BASE_URL`, `GLOBAL_DAILY_CAP`).
+Visitor calls are capped per user per day and globally (`fn_usage`, `bump_usage()`).
 
-| Function | Request | Response | Notes |
-|---|---|---|---|
-| `serve-leads` | `{ count }` | `{ leads: LeadRow[], remaining }` | Picks unseen `is_lead_candidate` parcels, inserts `served_leads`, calls zoning only for new PIDs not in `zoning_cache`. |
-| `lookup-zoning` | `{ pid, lat, lng }` | zoning row | Internal, called by `serve-leads`. Augur function with fixes: `output_fields=zoning,plu,plu-tags,controls,gde-controls,parcels` (no `geom`), lat/lng not address, read flags from `permitted_land_uses`, FAR from `controls.far_standard`, whole-word STR match, jurisdiction fallback stored as `precision='jurisdiction_default'`. |
-| `draft-outreach` | `{ pid }` | `{ text }` | Claude drafts from `lead_view` fields only. No simulated signals in the prompt. |
-| `generate-copy` | `{ pid, kind, plant_errors }` | `{ id, claims: Claim[], prompt_version }` | Claude returns **JSON claims only**, each with `source` and optional `numeric`. Inserts into `assets`. `plant_errors` appends the demo trap claims. |
-| `judge-copy` | `{ claims }` | `CheckResult` | One LLM judge call with a rubric: does each claim overstate its source? Code checks run in the app and cannot be overruled. |
+| Function | Caller | Request | Response | Notes |
+|---|---|---|---|---|
+| `serve-leads` | visitor | `{ count }` | `{ leads, remaining }` | Unseen candidates, strongest signals first. Calls `lookup-zoning` for new PIDs. |
+| `lookup-zoning` | service / visitor | `{ pids }` | zoning rows | Zoneomics `zoneDetail` by lat/lng, cached by PID forever, 25 paid calls/day, no jurisdiction guessing. |
+| `draft-outreach` | visitor | `{ pid }` | `{ text, check }` | Lead record only. Numbers not in the record fail the check (one retry). Cached. |
+| `generate-copy` | visitor | `{ pid, kind, plant_errors, regenerate? }` | asset | Claude returns JSON claims only. Code checks run server-side and are stored. Cached per kind. |
+| `judge-copy` | visitor | `{ asset_id }` | `{ result, verdicts }` | Judges the stored asset against the server-side record. Stored on the asset. |
+| `run-evals` | service | `{ case_ids, run_id? }` | run + metrics | Golden set (`golden_cases`), max 6 cases per call; pass `run_id` to continue a run. |
 
-`Claim` and `CheckResult` shapes are in `types/domain.ts`.
+Approval goes through `approve_asset()`, which refuses unless every code check and the judge passed. Visitors cannot write `assets` directly.
+Code checks live in `supabase/functions/_shared/checks.ts` and are imported by both the functions and the browser.
 
 ## One-time data load (service role, run locally)
 
@@ -74,7 +78,7 @@ Comps (`get_comps`) treat parcels sharing a sale date, price and owner as one de
 
 ## UI notes
 
-- Map: Leaflet (free, no key) with CARTO Voyager tiles and a USGS National Map imagery toggle (public domain, no key). Keep the attribution on screen. No Google or Esri services.
+- Map: Leaflet (free, no key) with OpenStreetMap standard tiles and a USGS National Map imagery toggle (public domain, no key). Keep the attribution on screen. No Google, Esri or CARTO (CARTO basemaps now require an API key). OSM tiles are fine for a demo under the OSM tile usage policy; move to a hosted tile plan if traffic grows.
 - Photos: each row has a photo slot (`components/ui/Thumb.tsx`). In the build, fill it server-side with a Street View Static or county aerial image so no key reaches the browser.
 - Owner contacts are intentionally not faked. The Ownership tab stops at the public record and points to Buildout’s owner lookup.
 
