@@ -33,7 +33,9 @@ const DAILY_CAP = Number(Deno.env.get("ZONEOMICS_DAILY_CAP") ?? "25");
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const OUTPUT_FIELDS = "zoning,plu,plu-tags,controls,gde-controls,parcels";
+// Fields must be on the Zoneomics plan; requesting one that is not fails the whole call (400). Override with a secret.
+// "gde-controls" is not on the current plan (probed 2026-11-11: it alone returns 400), so it is left out by default.
+const OUTPUT_FIELDS = Deno.env.get("ZONEOMICS_OUTPUT_FIELDS") ?? "zoning,plu,plu-tags,controls,parcels";
 const MAX_PIDS = 10;
 
 const cors = {
@@ -72,29 +74,16 @@ function toBool(v: unknown): boolean | null {
   return null; // null, undefined, "NULL", "STF", "NA" all mean unknown
 }
 
-function firstNumber(v: unknown): number | null {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v !== "string") return null;
-  const m = v.match(/(\d+(?:\.\d+)?)/);
-  return m ? parseFloat(m[1]) : null;
-}
-
 /**
- * Pull a number out of a Zoneomics *_standard block: { standard: {...}, "non-standard": {...} }.
- * The inner key names were collapsed in the sandbox view, so we match by pattern and prefer "standard".
- * The keys we matched are returned so the first real call can be checked and the patterns tightened.
+ * Read one exact key from a Zoneomics *_standard block: { standard: { <key>: value }, "non-standard": {...} }.
+ * Tightened after the first real calls (2026-11-11). Only `standard.<key>` is read, and only a plain number counts.
+ * "NA", "STF" (see text) and the free-text "non-standard" notes give null: pattern matching them produced a FAR of
+ * 33 from "floor area: 33%" and a height of 1 from "1 to 3 stories". Null shows as "not mapped"; we never guess.
  */
-function fromStandard(block: unknown, keyPattern: RegExp): { value: number | null; key: string | null } {
-  if (!block || typeof block !== "object") return { value: null, key: null };
-  const b = block as Record<string, unknown>;
-  for (const part of [b["standard"], b["non-standard"], b]) {
-    if (!part || typeof part !== "object") continue;
-    for (const [k, v] of Object.entries(part as Record<string, unknown>)) {
-      if (!keyPattern.test(k)) continue;
-      const n = firstNumber(v);
-      if (n !== null) return { value: n, key: k };
-    }
-  }
+function fromStandard(block: unknown, key: string): { value: number | null; key: string | null } {
+  const v = (block as { standard?: Record<string, unknown> } | null)?.standard?.[key];
+  if (typeof v === "number" && Number.isFinite(v)) return { value: v, key };
+  if (typeof v === "string" && /^\s*\d+(\.\d+)?\s*$/.test(v)) return { value: parseFloat(v), key };
   return { value: null, key: null };
 }
 
@@ -104,8 +93,8 @@ function parseZoneDetail(pid: string, body: any): { row: ZoningRow; matchedKeys:
   const plu = d.permitted_land_uses ?? {};
   const controls = d.controls ?? {};
 
-  const far = fromStandard(controls.far_standard, /far|floor.?area/i);
-  const height = fromStandard(controls.building_height_standard, /height.*(ft|feet)|max.*height/i);
+  const far = fromStandard(controls.far_standard, "max_far");
+  const height = fromStandard(controls.building_height_standard, "max_building_height_ft");
 
   const asOfRight: string[] = Array.isArray(plu.as_of_right) ? plu.as_of_right.filter((x: unknown) => typeof x === "string") : [];
   const zoneCode: string | null = typeof zd.zone_code === "string" && zd.zone_code.trim() ? zd.zone_code.trim() : null;
@@ -133,9 +122,9 @@ function parseZoneDetail(pid: string, body: any): { row: ZoningRow; matchedKeys:
 const redact = (s: string) =>
   s.replace(/api_key=[^&\s)"']+/gi, "api_key=REDACTED").split(ZONING_API_KEY || "\u0000").join("REDACTED");
 
-async function callZoneomics(lat: number, lng: number) {
+async function callZoneomics(lat: number, lng: number, outputFields = OUTPUT_FIELDS) {
   const url = `${BASE_URL}/v2/zoneDetail?` + new URLSearchParams({
-    api_key: ZONING_API_KEY, lat: String(lat), lng: String(lng), output_fields: OUTPUT_FIELDS,
+    api_key: ZONING_API_KEY, lat: String(lat), lng: String(lng), output_fields: outputFields,
   });
   // The key travels in the query string, and runtime fetch errors include the full URL. Every error message
   // that leaves this function is redacted, because results (including errors) are returned to callers.
@@ -168,10 +157,13 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "Use POST" }, 405);
   if (!ZONING_API_KEY) return json({ error: "ZONING_API_KEY secret is not set" }, 500);
 
-  // Who is calling?
+  // Who is calling? The service role: the legacy service JWT as bearer, or one of the project's sb_secret keys.
   const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
-  if (!token) return json({ error: "Missing Authorization header" }, 401);
-  const isService = token === SERVICE_KEY;
+  let secretKeys: string[] = [];
+  try { secretKeys = Object.values(JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") ?? "{}")); } catch { /* not provided */ }
+  const apikey = req.headers.get("apikey") ?? "";
+  const isService = (!!token && token === SERVICE_KEY) || (!!apikey && secretKeys.includes(apikey));
+  if (!token && !isService) return json({ error: "Missing Authorization header" }, 401);
   let userId: string | null = null;
   if (!isService) {
     const userClient = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: `Bearer ${token}` } } });
@@ -180,7 +172,7 @@ Deno.serve(async (req) => {
     userId = data.user.id;
   }
 
-  let input: { pid?: string; pids?: string[]; test?: { lat: number; lng: number } };
+  let input: { pid?: string; pids?: string[]; test?: { lat: number; lng: number; output_fields?: string } };
   try { input = await req.json(); } catch { return json({ error: "Body must be JSON" }, 400); }
 
   const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
@@ -190,10 +182,11 @@ Deno.serve(async (req) => {
   if (input.test) {
     if (!isService) return json({ error: "Test mode requires the service role key" }, 403);
     try {
-      const body = await callZoneomics(input.test.lat, input.test.lng);
+      const fields = input.test.output_fields ?? OUTPUT_FIELDS;
+      const body = await callZoneomics(input.test.lat, input.test.lng, fields);
       const { row, matchedKeys } = parseZoneDetail("TEST", body);
       const { raw: _raw, ...parsed } = row;
-      return json({ base_url: BASE_URL, parsed, matched_keys: matchedKeys, controls: body?.data?.controls ?? null });
+      return json({ base_url: BASE_URL, output_fields: fields, data_keys: Object.keys(body?.data ?? {}), parsed, matched_keys: matchedKeys, controls: body?.data?.controls ?? null });
     } catch (e) {
       return json({ error: (e as Error).message }, 502);
     }
@@ -251,7 +244,8 @@ Deno.serve(async (req) => {
 
       results.push({ pid, cached: false, zoning: { ...row, raw: undefined } });
     } catch (e) {
-      // Network or API errors are NOT cached, so a later request can retry.
+      // Network or API errors are NOT cached, so a later request can retry. Messages are already redacted.
+      console.error(`[lookup-zoning] ${pid}: ${(e as Error).message}`);
       results.push({ pid, cached: false, zoning: null, error: (e as Error).message });
     }
   }
