@@ -12,7 +12,7 @@ import { HttpError } from './http.ts';
  */
 export const PROMPT_VERSIONS = ['copy-v1', 'copy-v2'] as const;
 export type PromptVersion = (typeof PROMPT_VERSIONS)[number];
-export const PROMPT_VERSION: PromptVersion = 'copy-v1';
+export const PROMPT_VERSION: PromptVersion = 'copy-v2'; // usefulness 85-90% -> 100% with Sonnet writing (run eea9fc09)
 export const isPromptVersion = (v: unknown): v is PromptVersion => (PROMPT_VERSIONS as readonly unknown[]).includes(v);
 export type AssetKind = 'description' | 'highlights' | 'mailer' | 'email';
 export const KINDS: AssetKind[] = ['description', 'highlights', 'mailer', 'email'];

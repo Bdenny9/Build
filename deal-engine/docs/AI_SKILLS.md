@@ -114,3 +114,20 @@ variance; we have already seen the same model and cases block 100% on one run an
 | A prompt change regressed | Redeploy the previous function version from git (prompt is versioned in code) | Every asset records its `prompt_version`, so affected copy can be found and re-judged |
 | Judge too strict or too loose | Approval is already gated by code checks; re-judge affected assets (`rejudge`) | A failing re-judge withdraws approval automatically |
 | Upstream data wrong (zoning) | `zoning_cache` rows can be deleted per PID; copy ignores unverified zoning | Fix the parser; the raw response is stored for audit |
+
+## 8. Decisions on record
+
+**Models and prompt (2026-11-11).** Listing copy: **Sonnet 5.5 writes, Opus 5.5 judges, prompt `copy-v2`.** Outreach also writes on Sonnet.
+
+| Evidence | Result |
+|---|---|
+| Haiku judging (3 runs, set v2) | Let an inflated footprint through in 2 of 3 runs; once reasoned "inflates the figure" and still passed it. Rejected for the judge role. |
+| Haiku writing (6 runs, set v2) | Usefulness 77.5–85%: drops the comps median. Below target. |
+| Sonnet writing, v1 prompt (3 runs, set v2) | Usefulness 85–90%. |
+| **Sonnet writes / Opus judges, `copy-v2` (run `eea9fc09`, set v3)** | **Usefulness 100%, every trap blocked in every category, clean copy 100%, injection and missing-data 100%, ~$0.018 per asset.** One known-true claim flagged (12.5% of 8): open item. |
+
+Label review found one mislabeled golden case (a two-source claim marked true); fixed as golden set v3 (`0007`).
+Rollback: set `GEN_MODEL` / `JUDGE_MODEL` secrets, or change `PROMPT_VERSION` back to `copy-v1`; both versions stay in code.
+
+**Known gaps.** Outreach has no golden set yet (it has a numbers-from-the-record check only). Only one repeat of the
+shipped combination was run on set v3; the release process calls for three before the next change.

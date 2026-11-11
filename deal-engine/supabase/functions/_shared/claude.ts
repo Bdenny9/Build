@@ -4,9 +4,11 @@ import { HttpError } from './http.ts';
 /** Models allowed for copy generation and judging. Production picks come from function secrets. */
 export const MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] as const;
 export type Model = (typeof MODELS)[number];
-const pick = (v: string | undefined): Model => (MODELS as readonly string[]).includes(v ?? '') ? (v as Model) : 'claude-opus-5-5';
-export const GEN_MODEL: Model = pick(Deno.env.get('GEN_MODEL'));
-export const JUDGE_MODEL: Model = pick(Deno.env.get('JUDGE_MODEL'));
+const pick = (v: string | undefined, fallback: Model): Model => (MODELS as readonly string[]).includes(v ?? '') ? (v as Model) : fallback;
+// Production defaults, chosen on golden set v3 (run eea9fc09): Sonnet writes, Opus judges. The judge is the safety
+// gate, so it gets the strongest model. GEN_MODEL / JUDGE_MODEL secrets override these for a no-deploy rollback.
+export const GEN_MODEL: Model = pick(Deno.env.get('GEN_MODEL'), 'claude-sonnet-5-5');
+export const JUDGE_MODEL: Model = pick(Deno.env.get('JUDGE_MODEL'), 'claude-opus-5-5');
 export const isModel = (v: unknown): v is Model => (MODELS as readonly unknown[]).includes(v);
 
 /** USD per million tokens (input, output). Haiku's rate is for prompts under 100K tokens, which these always are. */
