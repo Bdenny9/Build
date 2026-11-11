@@ -39,6 +39,9 @@ export async function structured<T>(opts: {
   effort?: 'low' | 'medium' | 'high';
   meter?: Meter;
 }): Promise<T> {
+  // Kill switch for non-deterministic failures: set the AI_PAUSED secret to "true" to stop every model call
+  // at once without a deploy. Rule-based features and already-approved copy keep working.
+  if (Deno.env.get('AI_PAUSED') === 'true') throw new HttpError(503, 'AI drafting is paused by the operator. Approved copy and all rule-based features still work.');
   const model = opts.model ?? GEN_MODEL;
   const started = Date.now();
   let res;

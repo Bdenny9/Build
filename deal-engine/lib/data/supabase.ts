@@ -41,9 +41,9 @@ const toAsset = (pid: string, kind: AssetKind, r: AssetRow): Asset => ({
   id: r.id, pid, kind, claims: r.claims, promptVersion: r.prompt_version, approvedAt: r.approved_at,
   codeChecks: r.code_checks ?? undefined, judge: r.judge,
 });
-interface EvalRow { id: string; prompt_version: string; model: string; gen_model: string | null; judge_model: string | null; run_at: string; cases: number; metrics: EvalMetrics; results?: { results: EvalRun['results'] } }
+interface EvalRow { id: string; prompt_version: string; model: string; gen_model: string | null; judge_model: string | null; golden_set: string; run_at: string; cases: number; metrics: EvalMetrics; results?: { results: EvalRun['results'] } }
 const toRun = (r: EvalRow): EvalRun => ({
-  id: r.id, promptVersion: r.prompt_version, model: r.model, genModel: r.gen_model ?? r.model, judgeModel: r.judge_model ?? r.model, runAt: r.run_at, cases: r.cases, metrics: r.metrics,
+  id: r.id, promptVersion: r.prompt_version, model: r.model, genModel: r.gen_model ?? r.model, judgeModel: r.judge_model ?? r.model, goldenSet: r.golden_set, runAt: r.run_at, cases: r.cases, metrics: r.metrics,
   results: r.results?.results,
 });
 async function uid() { const s = await ensureSession(); return s!.user.id; }
@@ -127,8 +127,8 @@ export const supabaseProvider: DataProvider = {
 
   async listEvalRuns() {
     // Runs with no completed cases are failed starts, not results.
-    const rows = must(await supabase().from('eval_runs').select('id, prompt_version, model, gen_model, judge_model, run_at, cases, metrics')
-      .gt('cases', 0).order('run_at', { ascending: false }).limit(20)) as EvalRow[];
+    const rows = must(await supabase().from('eval_runs').select('id, prompt_version, model, gen_model, judge_model, golden_set, run_at, cases, metrics')
+      .gt('cases', 0).order('run_at', { ascending: false }).limit(40)) as EvalRow[];
     return rows.map(toRun);
   },
   async getEvalRun(id) {

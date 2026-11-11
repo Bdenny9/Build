@@ -4,11 +4,13 @@ import { ASSUMPTIONS } from '@/lib/calc/constants';
 import { shortDay } from '@/lib/calc/format';
 import { data } from '@/lib/data';
 import { useAsync } from '@/hooks/useAsync';
+import type { Analysis } from '@/hooks/useAnalysis';
+import { NextStepCard } from './NextStepCard';
 import type { Activity, Lead, LeadStatus } from '@/types/domain';
 
 const STATUSES: LeadStatus[] = ['New', 'Contacted', 'Conversation', 'Meeting', 'Listing pitch', 'Listing won', 'Sold'];
 
-export function ActivityTab({ lead, onStatus }: { lead: Lead; onStatus: (s: LeadStatus) => void }) {
+export function ActivityTab({ lead, onStatus, analysis }: { lead: Lead; onStatus: (s: LeadStatus) => void; analysis: Analysis | null }) {
   const acts = useAsync(() => data.listActivities(lead.pid), [lead.pid]);
   const draft = useAsync(() => data.draftOutreach(lead.pid), [lead.pid]);
   const [kind, setKind] = useState<Activity['kind']>('Call');
@@ -28,8 +30,14 @@ export function ActivityTab({ lead, onStatus }: { lead: Lead; onStatus: (s: Lead
   }
   async function changeStatus(s: LeadStatus) { await data.setStatus(lead.pid, s); await data.addActivity(lead.pid, 'Status', `Changed to ${s}`); onStatus(s); acts.reload(); }
 
+  async function confirmStep(l: { kind: Activity['kind']; text: string; status?: LeadStatus }) {
+    await log(l.kind, l.text);
+    if (l.status) await changeStatus(l.status);
+  }
+
   return (
     <>
+      <NextStepCard lead={lead} analysis={analysis} activities={acts.data ?? []} onConfirm={confirmStep} />
       <div className="form-row">
         <label htmlFor="st">Status</label>
         <select id="st" value={lead.status} onChange={(e) => changeStatus(e.target.value as LeadStatus)}>{STATUSES.map((s) => <option key={s}>{s}</option>)}</select>

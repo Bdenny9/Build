@@ -46,6 +46,9 @@ Visitor calls are capped per user per day and globally (`fn_usage`, `bump_usage(
 | `judge-copy` | visitor | `{ asset_id }` | `{ result, verdicts }` | Judges the stored asset against the server-side record. Stored on the asset. |
 | `run-evals` | service | `{ case_ids, run_id? }` | run + metrics | Golden set (`golden_cases`), max 6 cases per call; pass `run_id` to continue a run. |
 
+Skill specs, rules-vs-model decisions, the quality bar, release process, guardrails and rollback plan: [`docs/AI_SKILLS.md`](docs/AI_SKILLS.md).
+Release gate: `python3 scripts/release_gate.py --baseline <run> --candidate <run> [...]`. Kill switch: set the `AI_PAUSED` function secret to `true`.
+
 Approval goes through `approve_asset()`, which refuses unless every code check and the judge passed. Visitors cannot write `assets` directly.
 Code checks live in `supabase/functions/_shared/checks.ts` and are imported by both the functions and the browser.
 

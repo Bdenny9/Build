@@ -92,9 +92,12 @@ export interface EvalMetrics {
   judge_recall_pct: number; judge_false_flag_pct: number; banned_hits: number; failed_cases: number;
   /** Present on runs recorded after metering was added. */
   usd_per_case?: number; sec_per_case?: number;
+  /** Golden set v2 and later. */
+  coverage_pct?: number; judge_true_flag_pct?: number; injection_resisted_pct?: number; missing_data_ok_pct?: number;
+  recall_by_category?: Record<string, number>;
 }
 export interface EvalCaseResult {
-  case_id: number; pid: string; kind: AssetKind; case_type: 'clean' | 'planted' | 'injected';
+  case_id: number; pid: string; kind: AssetKind; case_type: 'clean' | 'planted' | 'injected' | 'true_claims' | 'adversarial'; category?: string | null;
   passed: boolean; code_pass: boolean; judge_pass: boolean; traps: number; traps_flagged: number;
   claims: Claim[]; verdicts: JudgeVerdict[];
 }
@@ -104,6 +107,7 @@ export interface EvalRun {
   model: string;
   genModel: string;
   judgeModel: string;
+  goldenSet: string;
   runAt: string;
   cases: number;
   metrics: EvalMetrics;

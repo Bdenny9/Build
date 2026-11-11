@@ -47,7 +47,7 @@ function Detail({ lead, onStatus }: { lead: Lead; onStatus: (s: LeadStatus) => v
       <div className="detail-scroll">
         {sub === 'summary' && <SummaryTab lead={lead} />}
         {sub === 'ownership' && <OwnershipTab lead={lead} />}
-        {sub === 'activity' && <ActivityTab lead={lead} onStatus={onStatus} />}
+        {sub === 'activity' && <ActivityTab lead={lead} onStatus={onStatus} analysis={analysis.data} />}
         {needs && (analysis.loading ? <p className="note">Running the numbers…</p>
           : analysis.error ? <div className="error">{analysis.error}</div>
           : analysis.data && (sub === 'opp' ? <OpportunityTab lead={lead} a={analysis.data} /> : <CompsTab a={analysis.data} />))}
