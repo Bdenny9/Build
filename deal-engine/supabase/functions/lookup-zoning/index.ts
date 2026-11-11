@@ -130,17 +130,27 @@ function parseZoneDetail(pid: string, body: any): { row: ZoningRow; matchedKeys:
 }
 
 // ---------- Zoneomics call ----------
+const redact = (s: string) =>
+  s.replace(/api_key=[^&\s)"']+/gi, "api_key=REDACTED").split(ZONING_API_KEY || "\u0000").join("REDACTED");
+
 async function callZoneomics(lat: number, lng: number) {
   const url = `${BASE_URL}/v2/zoneDetail?` + new URLSearchParams({
     api_key: ZONING_API_KEY, lat: String(lat), lng: String(lng), output_fields: OUTPUT_FIELDS,
   });
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  // The key travels in the query string, and runtime fetch errors include the full URL. Every error message
+  // that leaves this function is redacted, because results (including errors) are returned to callers.
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: { Accept: "application/json" } });
+  } catch (e) {
+    throw new Error(`Zoneomics request failed: ${redact((e as Error).message)}`);
+  }
   const text = await res.text();
   let body: any = null;
   try { body = JSON.parse(text); } catch { /* non-JSON error page */ }
   if (!res.ok || body?.success === false) {
     const msg = body?.message ? JSON.stringify(body.message) : text.slice(0, 200);
-    throw new Error(`Zoneomics ${res.status}: ${msg}`);
+    throw new Error(redact(`Zoneomics ${res.status}: ${msg}`));
   }
   return body;
 }
@@ -234,7 +244,9 @@ Deno.serve(async (req) => {
       console.log(`[lookup-zoning] ${pid}: zone=${row.zone_code} far_key=${matchedKeys.far} height_key=${matchedKeys.height}`);
 
       // Store definitive answers, including "no zoning found", so we never pay twice for the same PID.
-      const { error: upErr } = await admin.from("zoning_cache").upsert({ ...row, fetched_at: new Date().toISOString() }, { onConflict: "pid" });
+      // raw is redacted too, in case the API ever echoes request parameters back.
+      const safeRaw = JSON.parse(redact(JSON.stringify(row.raw ?? null)));
+      const { error: upErr } = await admin.from("zoning_cache").upsert({ ...row, raw: safeRaw, fetched_at: new Date().toISOString() }, { onConflict: "pid" });
       if (upErr) console.error(`[lookup-zoning] cache write failed for ${pid}: ${upErr.message}`);
 
       results.push({ pid, cached: false, zoning: { ...row, raw: undefined } });
